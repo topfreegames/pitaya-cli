@@ -47,7 +47,7 @@
     "internal/packet",
     "logger"
   ]
-  revision = "b0c57c202a2ac15b91d2860523e4b65c2ea66de8"
+  revision = "24bb1e1f8efec8a0350b71fcbe58149cedbf603d"
 
 [[projects]]
   branch = "master"
