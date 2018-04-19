@@ -23,11 +23,12 @@ package main
 import (
 	"errors"
 
+	"github.com/sirupsen/logrus"
 	"github.com/topfreegames/pitaya/client"
 	ishell "gopkg.in/abiosoft/ishell.v2"
 )
 
-var pClient = client.New(false)
+var pClient = client.New(logrus.InfoLevel)
 var disconnectedCh chan struct{}
 
 func registerRequest(shell *ishell.Shell) {
@@ -45,8 +46,8 @@ func registerRequest(shell *ishell.Shell) {
 			}
 			route := c.Args[0]
 			var data []byte
-			if len(c.Args) > 1 {
-				data = []byte(c.Args[1])
+			if len(c.RawArgs) > 2 {
+				data = []byte(c.RawArgs[2])
 			}
 			pClient.SendRequest(route, data)
 		},

@@ -47,7 +47,7 @@
     "internal/packet",
     "logger"
   ]
-  revision = "24bb1e1f8efec8a0350b71fcbe58149cedbf603d"
+  revision = "94c80ec52341cfca0c2aa8ba60f3c905cab3ff06"
 
 [[projects]]
   branch = "master"
@@ -62,7 +62,7 @@
     "unix",
     "windows"
   ]
-  revision = "f6f352972f061230a99fbf49d1eb8073ebdb36cb"
+  revision = "3ccc7e5779793fd54564baf60c51bf017955e0ba"
 
 [[projects]]
   branch = "v2"
@@ -73,6 +73,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "71d09d581f60fd11de7dc0fa982c30e041ee7a29faa8bc80b11cde35b362999b"
+  inputs-digest = "b83d50f1fbd16ba4b8aad39ae9229dbafccee6a2ae7326533d63f9b927dc1a84"
   solver-name = "gps-cdcl"
   solver-version = 1
