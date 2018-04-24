@@ -22,7 +22,10 @@ package main
 
 import (
 	"errors"
+	"fmt"
+	"os"
 
+	homedir "github.com/mitchellh/go-homedir"
 	"github.com/sirupsen/logrus"
 	"github.com/topfreegames/pitaya/client"
 	ishell "gopkg.in/abiosoft/ishell.v2"
@@ -119,9 +122,20 @@ func readServerMessages(c *ishell.Shell) {
 	}
 }
 
-func main() {
+func configure(c *ishell.Shell) {
+	historyPath := os.Getenv("PITAYACLI_HISTORY_PATH")
+	if historyPath == "" {
+		home, _ := homedir.Dir()
+		historyPath = fmt.Sprintf("%s/.pitayacli_history", home)
+	}
 
+	c.SetHistoryPath(historyPath)
+}
+
+func main() {
 	shell := ishell.New()
+	configure(shell)
+
 	shell.Println("Pitaya REPL Client")
 
 	registerConnect(shell)
