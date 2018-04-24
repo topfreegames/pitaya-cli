@@ -45,9 +45,10 @@
     "internal/codec",
     "internal/message",
     "internal/packet",
-    "logger"
+    "logger",
+    "util/compression"
   ]
-  revision = "94c80ec52341cfca0c2aa8ba60f3c905cab3ff06"
+  revision = "d784d4c2195b16e2a1d953b11d9c44b8aaaf4699"
 
 [[projects]]
   branch = "master"

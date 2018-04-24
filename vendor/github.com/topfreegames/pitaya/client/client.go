@@ -31,6 +31,7 @@ import (
 	"github.com/topfreegames/pitaya/internal/codec"
 	"github.com/topfreegames/pitaya/internal/message"
 	"github.com/topfreegames/pitaya/internal/packet"
+	"github.com/topfreegames/pitaya/util/compression"
 	"github.com/topfreegames/pitaya/logger"
 )
 
@@ -71,6 +72,7 @@ type Client struct {
 	pendingChan     chan bool
 	closeChan       chan struct{}
 	nextID          uint32
+	messageEncoder  message.MessageEncoder
 }
 
 // New returns a new client
@@ -87,7 +89,10 @@ func New(logLevel logrus.Level) *Client {
 		packetDecoder:   codec.NewPomeloPacketDecoder(),
 		packetChan:      make(chan *packet.Packet, 10),
 		IncomingMsgChan: make(chan *message.Message, 10),
-		pendingChan:     make(chan bool, 30),
+		// 30 here is the limit of inflight messages
+		// TODO this should probably be configurable
+		pendingChan: make(chan bool, 30),
+		messageEncoder:  message.NewEncoder(true),
 	}
 }
 
@@ -113,6 +118,13 @@ func (c *Client) handleHandshakeResponse() error {
 	}
 
 	handshake := &HandshakeData{}
+	if compression.IsCompressed(handshakePacket.Data) {
+		handshakePacket.Data, err = compression.InflateData(handshakePacket.Data)
+		if err != nil {
+			return err
+		}
+	}
+
 	err = json.Unmarshal(handshakePacket.Data, handshake)
 	if err != nil {
 		return err
@@ -268,7 +280,7 @@ func (c *Client) sendMsg(msgType message.Type, route string, data []byte) error 
 		Data:  data,
 		Err:   false,
 	}
-	encMsg, err := m.Encode()
+	encMsg, err := c.messageEncoder.Encode(&m)
 	if err != nil {
 		return err
 	}
