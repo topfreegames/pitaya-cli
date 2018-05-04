@@ -72,8 +72,8 @@ func registerNotify(shell *ishell.Shell) {
 			}
 			route := c.Args[0]
 			var data []byte
-			if len(c.Args) > 1 {
-				data = []byte(c.Args[1])
+			if len(c.RawArgs) > 2 {
+				data = []byte(c.RawArgs[2])
 			}
 			pClient.SendNotify(route, data)
 		},
