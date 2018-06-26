@@ -33,7 +33,7 @@ run-tadpole-example:
 
 protos-compile:
 	@cd benchmark/testdata && ./gen_proto.sh
-	@cd protos && protoc --gogofaster_out=. pitaya.proto
+	@cd protos && protoc --gogofaster_out=. *.proto
 
 rm-test-temp-files:
 	@rm -f cluster/127.0.0.1* 127.0.0.1*
@@ -54,7 +54,16 @@ e2e-test: ensure-testing-deps ensure-testing-bin
 
 benchmark-test: ensure-testing-deps ensure-testing-bin
 	@echo "===============RUNNING BENCHMARK TESTS==============="
+	@echo "--- starting testing servers"
+	@PITAYA_METRICS_PROMETHEUS_PORT=9098 ./examples/testing/server -type game -frontend=false > /dev/null 2>&1 & echo $$! > back.PID
+	@PITAYA_METRICS_PROMETHEUS_PORT=9099 ./examples/testing/server -type connector -frontend=true > /dev/null 2>&1 & echo $$! > front.PID
+	@echo "--- sleeping for 5 seconds"
+	@sleep 5
 	@go test ./benchmark/benchmark_test.go -bench=.
+	@echo "--- killing testing servers"
+	@kill `cat back.PID` && rm back.PID
+	@kill `cat front.PID` && rm front.PID
+
 
 unit-test-coverage: kill-testing-deps
 	@echo "===============RUNNING UNIT TESTS==============="
@@ -63,6 +72,7 @@ unit-test-coverage: kill-testing-deps
 test: kill-testing-deps test-coverage
 	@make rm-test-temp-files
 	@make ensure-testing-deps
+	@sleep 10
 	@make e2e-test
 
 test-coverage: unit-test-coverage

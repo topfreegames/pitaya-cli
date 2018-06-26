@@ -21,17 +21,19 @@
 package service
 
 import (
-	"bytes"
-	"encoding/gob"
+	"context"
+	"errors"
 	"fmt"
 	"reflect"
 
 	"github.com/gogo/protobuf/proto"
+	opentracing "github.com/opentracing/opentracing-go"
 
 	"github.com/topfreegames/pitaya/agent"
 	"github.com/topfreegames/pitaya/cluster"
 	"github.com/topfreegames/pitaya/component"
 	"github.com/topfreegames/pitaya/constants"
+	pcontext "github.com/topfreegames/pitaya/context"
 	e "github.com/topfreegames/pitaya/errors"
 	"github.com/topfreegames/pitaya/internal/codec"
 	"github.com/topfreegames/pitaya/internal/message"
@@ -41,6 +43,7 @@ import (
 	"github.com/topfreegames/pitaya/router"
 	"github.com/topfreegames/pitaya/serialize"
 	"github.com/topfreegames/pitaya/session"
+	"github.com/topfreegames/pitaya/tracing"
 	"github.com/topfreegames/pitaya/util"
 )
 
@@ -53,7 +56,8 @@ type RemoteService struct {
 	rpcClient        cluster.RPCClient
 	services         map[string]*component.Service // all registered service
 	router           *router.Router
-	messageEncoder   message.MessageEncoder
+	messageEncoder   message.Encoder
+	server           *cluster.Server // server obj
 }
 
 // NewRemoteService creates and return a new RemoteService
@@ -64,7 +68,8 @@ func NewRemoteService(
 	encoder codec.PacketEncoder,
 	serializer serialize.Serializer,
 	router *router.Router,
-	messageEncoder message.MessageEncoder,
+	messageEncoder message.Encoder,
+	server *cluster.Server,
 ) *RemoteService {
 	return &RemoteService{
 		services:         make(map[string]*component.Service),
@@ -75,48 +80,71 @@ func NewRemoteService(
 		serializer:       serializer,
 		router:           router,
 		messageEncoder:   messageEncoder,
+		server:           server,
 	}
 }
 
 var remotes = make(map[string]*component.Remote) // all remote method
 
-func (r *RemoteService) remoteProcess(server *cluster.Server, a *agent.Agent, route *route.Route, msg *message.Message) {
-	var res *protos.Response
-	var err error
-	if res, err = r.remoteCall(server, protos.RPCType_Sys, route, a.Session, msg); err != nil {
-		logger.Log.Errorf(err.Error())
-		a.AnswerWithError(msg.ID, err)
-		return
-	}
-	if msg.Type == message.Request {
-		err := a.Session.ResponseMID(msg.ID, res.Data)
+func (r *RemoteService) remoteProcess(
+	ctx context.Context,
+	server *cluster.Server,
+	a *agent.Agent,
+	route *route.Route,
+	msg *message.Message,
+) {
+	res, err := r.remoteCall(ctx, server, protos.RPCType_Sys, route, a.Session, msg)
+	switch msg.Type {
+	case message.Request:
 		if err != nil {
 			logger.Log.Error(err)
-			a.AnswerWithError(msg.ID, err)
+			a.AnswerWithError(ctx, msg.ID, err)
+			return
 		}
-	} else if res.Error != nil {
-		logger.Log.Errorf("error while sending a notify: %s", res.Error.GetMsg())
+		err := a.Session.ResponseMID(ctx, msg.ID, res.Data)
+		if err != nil {
+			logger.Log.Error(err)
+			a.AnswerWithError(ctx, msg.ID, err)
+		}
+
+	case message.Notify:
+		defer tracing.FinishSpan(ctx, err)
+		if err == nil && res.Error != nil {
+			err = errors.New(res.Error.GetMsg())
+		}
+		if err != nil {
+			logger.Log.Errorf("error while sending a notify: %s", err.Error())
+		}
 	}
 }
 
-// RPC makes rpcs
-func (r *RemoteService) RPC(serverID string, route *route.Route, reply interface{}, args ...interface{}) error {
-	data, err := util.GobEncode(args...)
-	if err != nil {
-		return err
-	}
+// DoRPC do rpc and get answer
+func (r *RemoteService) DoRPC(ctx context.Context, serverID string, route *route.Route, protoData []byte) (*protos.Response, error) {
 	msg := &message.Message{
 		Type:  message.Request,
 		Route: route.Short(),
-		Data:  data,
+		Data:  protoData,
 	}
 
 	target, _ := r.serviceDiscovery.GetServer(serverID)
 	if serverID != "" && target == nil {
-		return constants.ErrServerNotFound
+		return nil, constants.ErrServerNotFound
 	}
 
-	res, err := r.remoteCall(target, protos.RPCType_User, route, nil, msg)
+	return r.remoteCall(ctx, target, protos.RPCType_User, route, nil, msg)
+}
+
+// RPC makes rpcs
+func (r *RemoteService) RPC(ctx context.Context, serverID string, route *route.Route, reply proto.Message, arg proto.Message) error {
+	var data []byte
+	var err error
+	if arg != nil {
+		data, err = proto.Marshal(arg)
+		if err != nil {
+			return err
+		}
+	}
+	res, err := r.DoRPC(ctx, serverID, route, data)
 	if err != nil {
 		return err
 	}
@@ -129,9 +157,11 @@ func (r *RemoteService) RPC(serverID string, route *route.Route, reply interface
 		}
 	}
 
-	err = util.GobDecode(reply, res.GetData())
-	if err != nil {
-		return err
+	if reply != nil {
+		err = proto.Unmarshal(res.GetData(), reply)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -168,37 +198,82 @@ func (r *RemoteService) ProcessUserPush() {
 	}
 }
 
-// ProcessRemoteMessages processes remote messages
-func (r *RemoteService) ProcessRemoteMessages(threadID int) {
-	// TODO need to monitor stuff here to guarantee messages are not being dropped
-	for req := range r.rpcServer.GetUnhandledRequestsChannel() {
-		logger.Log.Debugf("(%d) processing message %v", threadID, req.GetMsg().GetID())
-		rt, err := route.Decode(req.GetMsg().GetRoute())
-		if err != nil {
-			response := &protos.Response{
-				Error: &protos.Error{
-					Code: e.ErrBadRequestCode,
-					Msg:  "cannot decode route",
-					Metadata: map[string]string{
-						"route": req.GetMsg().GetRoute(),
-					},
-				},
-			}
-			r.sendReply(req.GetMsg().GetReply(), response)
-			continue
-		}
+func getContextFromRequest(req *protos.Request, serverID string) (context.Context, error) {
+	ctx, err := pcontext.Decode(req.GetMetadata())
+	if err != nil {
+		return nil, err
+	}
+	tags := opentracing.Tags{
+		"local.id":     serverID,
+		"span.kind":    "server",
+		"peer.id":      pcontext.GetFromPropagateCtx(ctx, constants.PeerIDKey),
+		"peer.service": pcontext.GetFromPropagateCtx(ctx, constants.PeerServiceKey),
+	}
+	parent, err := tracing.ExtractSpan(ctx)
+	if err != nil {
+		logger.Log.Warnf("failed to retrieve parent span: %s", err.Error())
+	}
+	ctx = tracing.StartSpan(ctx, req.GetMsg().GetRoute(), tags, parent)
+	return ctx, nil
+}
 
-		switch {
-		case req.Type == protos.RPCType_Sys:
-			r.handleRPCSys(req, rt)
-		case req.Type == protos.RPCType_User:
-			r.handleRPCUser(req, rt)
+func processRemoteMessage(ctx context.Context, req *protos.Request, r *RemoteService) *protos.Response {
+	rt, err := route.Decode(req.GetMsg().GetRoute())
+	if err != nil {
+		response := &protos.Response{
+			Error: &protos.Error{
+				Code: e.ErrBadRequestCode,
+				Msg:  "cannot decode route",
+				Metadata: map[string]string{
+					"route": req.GetMsg().GetRoute(),
+				},
+			},
+		}
+		return response
+	}
+
+	switch {
+	case req.Type == protos.RPCType_Sys:
+		return r.handleRPCSys(ctx, req, rt)
+	case req.Type == protos.RPCType_User:
+		return r.handleRPCUser(ctx, req, rt)
+	default:
+		return &protos.Response{
+			Error: &protos.Error{
+				Code: e.ErrBadRequestCode,
+				Msg:  "invalid rpc type",
+				Metadata: map[string]string{
+					"route": req.GetMsg().GetRoute(),
+				},
+			},
 		}
 	}
 }
 
-func (r *RemoteService) handleRPCUser(req *protos.Request, rt *route.Route) {
-	reply := req.GetMsg().GetReply()
+// ProcessRemoteMessages processes remote messages
+func (r *RemoteService) ProcessRemoteMessages(threadID int) {
+	if r.rpcServer.GetUnhandledRequestsChannel() != nil {
+		for req := range r.rpcServer.GetUnhandledRequestsChannel() {
+			logger.Log.Debugf("(%d) processing message %v", threadID, req.GetMsg().GetID())
+			ctx, err := getContextFromRequest(req, r.server.ID)
+			reply := req.GetMsg().GetReply()
+			var response *protos.Response
+			if err != nil {
+				response = &protos.Response{
+					Error: &protos.Error{
+						Code: e.ErrInternalCode,
+						Msg:  err.Error(),
+					},
+				}
+			} else {
+				response = processRemoteMessage(ctx, req, r)
+			}
+			r.sendReply(ctx, reply, response)
+		}
+	}
+}
+
+func (r *RemoteService) handleRPCUser(ctx context.Context, req *protos.Request, rt *route.Route) *protos.Response {
 	response := &protos.Response{}
 
 	remote, ok := remotes[rt.Short()]
@@ -213,12 +288,11 @@ func (r *RemoteService) handleRPCUser(req *protos.Request, rt *route.Route) {
 				},
 			},
 		}
-		r.sendReply(reply, response)
-		return
+		return response
 	}
-	params := []reflect.Value{remote.Receiver}
+	params := []reflect.Value{remote.Receiver, reflect.ValueOf(ctx)}
 	if remote.HasArgs {
-		args, err := unmarshalRemoteArg(req.GetMsg().GetData())
+		arg, err := unmarshalRemoteArg(remote, req.GetMsg().GetData())
 		if err != nil {
 			response := &protos.Response{
 				Error: &protos.Error{
@@ -226,12 +300,9 @@ func (r *RemoteService) handleRPCUser(req *protos.Request, rt *route.Route) {
 					Msg:  err.Error(),
 				},
 			}
-			r.sendReply(reply, response)
-			return
+			return response
 		}
-		for _, arg := range args {
-			params = append(params, reflect.ValueOf(arg))
-		}
+		params = append(params, reflect.ValueOf(arg))
 	}
 
 	ret, err := util.Pcall(remote.Method, params)
@@ -248,29 +319,37 @@ func (r *RemoteService) handleRPCUser(req *protos.Request, rt *route.Route) {
 				response.Error.Metadata = val.Metadata
 			}
 		}
-		r.sendReply(reply, response)
-		return
+		return response
 	}
 
-	buf := bytes.NewBuffer([]byte(nil))
+	var b []byte
 	if ret != nil {
-		if err := gob.NewEncoder(buf).Encode(ret); err != nil {
+		pb, ok := ret.(proto.Message)
+		if !ok {
+			response := &protos.Response{
+				Error: &protos.Error{
+					Code: e.ErrUnknownCode,
+					Msg:  constants.ErrWrongValueType.Error(),
+				},
+			}
+			return response
+		}
+		if b, err = proto.Marshal(pb); err != nil {
 			response := &protos.Response{
 				Error: &protos.Error{
 					Code: e.ErrUnknownCode,
 					Msg:  err.Error(),
 				},
 			}
-			r.sendReply(reply, response)
-			return
+			return response
 		}
 	}
 
-	response.Data = buf.Bytes()
-	r.sendReply(reply, response)
+	response.Data = b
+	return response
 }
 
-func (r *RemoteService) handleRPCSys(req *protos.Request, rt *route.Route) {
+func (r *RemoteService) handleRPCSys(ctx context.Context, req *protos.Request, rt *route.Route) *protos.Response {
 	reply := req.GetMsg().GetReply()
 	response := &protos.Response{}
 
@@ -293,11 +372,10 @@ func (r *RemoteService) handleRPCSys(req *protos.Request, rt *route.Route) {
 				Msg:  err.Error(),
 			},
 		}
-		r.sendReply(reply, response)
-		return
+		return response
 	}
 
-	ret, err := processHandlerMessage(rt, r.serializer, a.Srv, a.Session, req.GetMsg().GetData(), req.GetMsg().GetType(), true)
+	ret, err := processHandlerMessage(ctx, rt, r.serializer, a.Session, req.GetMsg().GetData(), req.GetMsg().GetType(), true)
 	if err != nil {
 		logger.Log.Warnf(err.Error())
 		response = &protos.Response{
@@ -315,10 +393,10 @@ func (r *RemoteService) handleRPCSys(req *protos.Request, rt *route.Route) {
 	} else {
 		response = &protos.Response{Data: ret}
 	}
-	r.sendReply(reply, response)
+	return response
 }
 
-func (r *RemoteService) sendReply(reply string, response *protos.Response) {
+func (r *RemoteService) sendReply(ctx context.Context, reply string, response *protos.Response) {
 	p, err := proto.Marshal(response)
 	if err != nil {
 		response := &protos.Response{
@@ -329,10 +407,16 @@ func (r *RemoteService) sendReply(reply string, response *protos.Response) {
 		}
 		p, _ = proto.Marshal(response)
 	}
+
+	if err == nil && response.Error != nil {
+		err = errors.New(response.Error.Msg)
+	}
+	defer tracing.FinishSpan(ctx, err)
 	r.rpcClient.Send(reply, p)
 }
 
 func (r *RemoteService) remoteCall(
+	ctx context.Context,
 	server *cluster.Server,
 	rpcType protos.RPCType,
 	route *route.Route,
@@ -345,13 +429,13 @@ func (r *RemoteService) remoteCall(
 	target := server
 
 	if target == nil {
-		target, err = r.router.Route(rpcType, svType, session, route)
+		target, err = r.router.Route(rpcType, svType, session, route, msg)
 		if err != nil {
 			return nil, e.NewError(err, e.ErrInternalCode)
 		}
 	}
 
-	res, err := r.rpcClient.Call(rpcType, route, session, msg, target)
+	res, err := r.rpcClient.Call(ctx, rpcType, route, session, msg, target)
 	if err != nil {
 		return nil, err
 	}

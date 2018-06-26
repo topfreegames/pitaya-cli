@@ -60,19 +60,28 @@ func (c *Config) fillDefaultValues() {
 		// the sum of pitaya.buffer.cluster.rpc.server.messages, for covering the worst case scenario
 		// a single backend server should have the config pitaya.buffer.cluster.rpc.server.messages bigger
 		// than the sum of the config pitaya.concurrency.handler.dispatch among all frontend servers
-		"pitaya.concurrency.handler.dispatch":           25,
-		"pitaya.concurrency.remote.service":             30,
-		"pitaya.cluster.rpc.client.nats.connect":        "nats://localhost:4222",
-		"pitaya.cluster.rpc.client.nats.requesttimeout": "5s",
-		"pitaya.cluster.rpc.server.nats.connect":        "nats://localhost:4222",
-		"pitaya.cluster.sd.etcd.dialtimeout":            "5s",
-		"pitaya.cluster.sd.etcd.endpoints":              "localhost:2379",
-		"pitaya.cluster.sd.etcd.prefix":                 "pitaya/",
-		"pitaya.cluster.sd.etcd.heartbeat.interval":     "20s",
-		"pitaya.cluster.sd.etcd.heartbeat.ttl":          "60s",
-		"pitaya.cluster.sd.etcd.syncservers.interval":   "120s",
-		"pitaya.dataCompression":                        true,
-		"pitaya.heartbeat.interval":                     "30s",
+		"pitaya.concurrency.handler.dispatch":                   25,
+		"pitaya.concurrency.remote.service":                     30,
+		"pitaya.cluster.rpc.client.nats.connect":                "nats://localhost:4222",
+		"pitaya.cluster.rpc.client.nats.requesttimeout":         "5s",
+		"pitaya.cluster.rpc.client.nats.maxreconnectionretries": 15,
+		"pitaya.cluster.rpc.server.nats.connect":                "nats://localhost:4222",
+		"pitaya.cluster.rpc.server.nats.maxreconnectionretries": 15,
+		"pitaya.cluster.sd.etcd.dialtimeout":                    "5s",
+		"pitaya.cluster.sd.etcd.endpoints":                      "localhost:2379",
+		"pitaya.cluster.sd.etcd.prefix":                         "pitaya/",
+		"pitaya.cluster.sd.etcd.heartbeat.ttl":                  "60s",
+		"pitaya.cluster.sd.etcd.heartbeat.log":                  true,
+		"pitaya.cluster.sd.etcd.syncservers.interval":           "120s",
+		"pitaya.handler.messages.compression":                   true,
+		"pitaya.heartbeat.interval":                             "30s",
+		"pitaya.session.unique":                                 true,
+		"pitaya.metrics.statsd.enabled":                         false,
+		"pitaya.metrics.statsd.host":                            "localhost:9125",
+		"pitaya.metrics.statsd.prefix":                          "pitaya.",
+		"pitaya.metrics.statsd.rate":                            1,
+		"pitaya.metrics.prometheus.port":                        9090,
+		"pitaya.metrics.tags":                                   map[string]string{},
 	}
 
 	for param := range defaultsMap {
@@ -110,4 +119,9 @@ func (c *Config) GetStringSlice(s string) []string {
 // Get returns an interface from the inner config
 func (c *Config) Get(s string) interface{} {
 	return c.config.Get(s)
+}
+
+// GetStringMapString returns a string map string from the inner config
+func (c *Config) GetStringMapString(s string) map[string]string {
+	return c.config.GetStringMapString(s)
 }

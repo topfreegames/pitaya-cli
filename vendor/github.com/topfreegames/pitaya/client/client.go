@@ -83,7 +83,7 @@ type Client struct {
 	requestTimeout  time.Duration
 	closeChan       chan struct{}
 	nextID          uint32
-	messageEncoder  message.MessageEncoder
+	messageEncoder  message.Encoder
 }
 
 // New returns a new client
@@ -104,13 +104,12 @@ func New(logLevel logrus.Level, requestTimeout ...time.Duration) *Client {
 		packetEncoder:   codec.NewPomeloPacketEncoder(),
 		packetDecoder:   codec.NewPomeloPacketDecoder(),
 		packetChan:      make(chan *packet.Packet, 10),
-		IncomingMsgChan: make(chan *message.Message, 10),
 		pendingRequests: make(map[uint]*pendingRequest),
 		requestTimeout:  reqTimeout,
 		// 30 here is the limit of inflight messages
 		// TODO this should probably be configurable
 		pendingChan:    make(chan bool, 30),
-		messageEncoder: message.NewEncoder(true),
+		messageEncoder: message.NewMessagesEncoder(true),
 	}
 }
 
@@ -223,11 +222,15 @@ func (c *Client) handlePackets() {
 						delete(c.pendingRequests, m.ID)
 						<-c.pendingChan
 					} else {
+						c.pendingReqMutex.Unlock()
 						continue // do not process msg for already timedout request
 					}
 					c.pendingReqMutex.Unlock()
 				}
 				c.IncomingMsgChan <- m
+			case packet.Kick:
+				logger.Log.Warn("got kick packet from the server! disconnecting...")
+				c.Disconnect()
 			}
 		case <-c.closeChan:
 			return
@@ -268,17 +271,18 @@ func (c *Client) handleServerMessages() {
 
 func (c *Client) sendHeartbeats(interval int) {
 	t := time.NewTicker(time.Duration(interval) * time.Second)
-	defer t.Stop()
+	defer func() {
+		t.Stop()
+		c.Disconnect()
+	}()
 	for {
 		select {
 		case <-t.C:
-			p, err := c.packetEncoder.Encode(packet.Heartbeat, []byte{})
-			if err != nil {
-				logger.Log.Errorf("error encoding heartbeat package: %s", err.Error())
-			}
-			_, err = c.conn.Write(p)
+			p, _ := c.packetEncoder.Encode(packet.Heartbeat, []byte{})
+			_, err := c.conn.Write(p)
 			if err != nil {
 				logger.Log.Errorf("error sending heartbeat to sv: %s", err.Error())
+				return
 			}
 		case <-c.closeChan:
 			return
@@ -291,6 +295,7 @@ func (c *Client) Disconnect() {
 	if c.Connected {
 		c.Connected = false
 		close(c.closeChan)
+		close(c.IncomingMsgChan)
 		c.conn.Close()
 	}
 }
@@ -303,6 +308,7 @@ func (c *Client) ConnectTo(addr string) error {
 		return err
 	}
 	c.conn = conn
+	c.IncomingMsgChan = make(chan *message.Message, 10)
 
 	err = c.sendHandshakeRequest()
 	if err != nil {
@@ -321,13 +327,14 @@ func (c *Client) ConnectTo(addr string) error {
 }
 
 // SendRequest sends a request to the server
-func (c *Client) SendRequest(route string, data []byte) error {
+func (c *Client) SendRequest(route string, data []byte) (uint, error) {
 	return c.sendMsg(message.Request, route, data)
 }
 
 // SendNotify sends a notify to the server
 func (c *Client) SendNotify(route string, data []byte) error {
-	return c.sendMsg(message.Notify, route, data)
+	_, err := c.sendMsg(message.Notify, route, data)
+	return err
 }
 
 func (c *Client) buildPacket(msg message.Message) ([]byte, error) {
@@ -344,32 +351,31 @@ func (c *Client) buildPacket(msg message.Message) ([]byte, error) {
 }
 
 // sendMsg sends the request to the server
-func (c *Client) sendMsg(msgType message.Type, route string, data []byte) error {
-	atomic.AddUint32(&c.nextID, 1)
+func (c *Client) sendMsg(msgType message.Type, route string, data []byte) (uint, error) {
 	// TODO mount msg and encode
 	m := message.Message{
 		Type:  msgType,
-		ID:    uint(c.nextID),
+		ID:    uint(atomic.AddUint32(&c.nextID, 1)),
 		Route: route,
 		Data:  data,
 		Err:   false,
 	}
 	p, err := c.buildPacket(m)
 	if msgType == message.Request {
+		c.pendingChan <- true
 		c.pendingReqMutex.Lock()
-		if _, ok := c.pendingRequests[uint(c.nextID)]; !ok {
-			c.pendingRequests[uint(c.nextID)] = &pendingRequest{
+		if _, ok := c.pendingRequests[m.ID]; !ok {
+			c.pendingRequests[m.ID] = &pendingRequest{
 				msg:    &m,
 				sentAt: time.Now(),
 			}
-			c.pendingChan <- true
 		}
 		c.pendingReqMutex.Unlock()
 	}
 
 	if err != nil {
-		return err
+		return m.ID, err
 	}
 	_, err = c.conn.Write(p)
-	return err
+	return m.ID, err
 }

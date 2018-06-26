@@ -38,4 +38,32 @@ const (
 
 	// SessionBindRoute is the route used for binding session
 	SessionBindRoute = "sys.bindsession"
+
+	// KickRoute is the route used for kicking an user
+	KickRoute = "sys.kick"
 )
+
+// SessionCtxKey is the context key where the session will be set
+var SessionCtxKey = "session"
+
+type propagateKey struct{}
+
+// PropagateCtxKey is the context key where the content that will be
+// propagated through rpc calls is set
+var PropagateCtxKey = propagateKey{}
+
+// SpanPropagateCtxKey is the key holding the opentracing spans inside
+// the propagate key
+var SpanPropagateCtxKey = "opentracing-span"
+
+// PeerIDKey is the key holding the peer id to be sent over the context
+var PeerIDKey = "peer.id"
+
+// PeerServiceKey is the key holding the peer service to be sent over the context
+var PeerServiceKey = "peer.service"
+
+// StartTimeKey is the key holding the request start time (in ns) to be sent over the context
+var StartTimeKey = "req-start-time"
+
+// RouteKey is the key holding the request route to be sent over the context
+var RouteKey = "req-route"

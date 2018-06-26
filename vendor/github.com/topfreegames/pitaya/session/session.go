@@ -21,35 +21,38 @@
 package session
 
 import (
-	"bytes"
-	"encoding/gob"
+	"context"
+	"encoding/json"
 	"net"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/gogo/protobuf/proto"
 	nats "github.com/nats-io/go-nats"
 	"github.com/topfreegames/pitaya/constants"
 	"github.com/topfreegames/pitaya/logger"
 	"github.com/topfreegames/pitaya/protos"
-	"github.com/topfreegames/pitaya/util"
 )
 
 // NetworkEntity represent low-level network instance
 type NetworkEntity interface {
 	Push(route string, v interface{}) error
-	ResponseMID(mid uint, v interface{}, isError ...bool) error
+	ResponseMID(ctx context.Context, mid uint, v interface{}, isError ...bool) error
 	Close() error
+	Kick(ctx context.Context) error
 	RemoteAddr() net.Addr
-	SendRequest(serverID, route string, v interface{}) (*protos.Response, error)
+	SendRequest(ctx context.Context, serverID, route string, v interface{}) (*protos.Response, error)
 }
 
 var (
-	// OnSessionBind represents the function called after the session is bound
-	OnSessionBind func(s *Session) error
-	sessionsByUID sync.Map
-	sessionsByID  sync.Map
-	sessionIDSvc  = newSessionIDService()
+	sessionBindCallbacks = make([]func(ctx context.Context, s *Session) error, 0)
+	sessionsByUID        sync.Map
+	sessionsByID         sync.Map
+	sessionIDSvc         = newSessionIDService()
+	// SessionCount keeps the current number of sessions
+	SessionCount int64
 )
 
 // Session represents a client session which could storage temp data during low-level
@@ -69,13 +72,6 @@ type Session struct {
 	frontendID        string                 // the id of the frontend that owns the session
 	frontendSessionID int64                  // the id of the session on the frontend server
 	Subscription      *nats.Subscription     // subscription created on bind when using nats rpc server
-}
-
-// Data to send over rpc
-type Data struct {
-	ID   int64
-	UID  string
-	Data map[string]interface{}
 }
 
 type sessionIDService struct {
@@ -106,6 +102,7 @@ func New(entity NetworkEntity, frontend bool, UID ...string) *Session {
 	}
 	if frontend {
 		sessionsByID.Store(s.id, s)
+		atomic.AddInt64(&SessionCount, 1)
 	}
 	if len(UID) > 0 {
 		s.uid = UID[0]
@@ -129,18 +126,27 @@ func GetSessionByID(id int64) *Session {
 	return nil
 }
 
-// SetOnSessionBind sets the method to be called when a session is bound
-func SetOnSessionBind(f func(s *Session) error) {
-	OnSessionBind = f
+// OnSessionBind adds a method to be called when a session is bound
+// same function cannot be added twice!
+func OnSessionBind(f func(ctx context.Context, s *Session) error) {
+	// Prevents the same function to be added twice in onSessionBind
+	sf1 := reflect.ValueOf(f)
+	for _, fun := range sessionBindCallbacks {
+		sf2 := reflect.ValueOf(fun)
+		if sf1.Pointer() == sf2.Pointer() {
+			return
+		}
+	}
+	sessionBindCallbacks = append(sessionBindCallbacks, f)
 }
 
 func (s *Session) updateEncodedData() error {
-	buf := bytes.NewBuffer([]byte(nil))
-	err := gob.NewEncoder(buf).Encode(s.data)
+	var b []byte
+	b, err := json.Marshal(s.data)
 	if err != nil {
 		return err
 	}
-	s.encodedData = buf.Bytes()
+	s.encodedData = b
 	return nil
 }
 
@@ -151,8 +157,8 @@ func (s *Session) Push(route string, v interface{}) error {
 
 // ResponseMID responses message to client, mid is
 // request message ID
-func (s *Session) ResponseMID(mid uint, v interface{}, err ...bool) error {
-	return s.entity.ResponseMID(mid, v, err...)
+func (s *Session) ResponseMID(ctx context.Context, mid uint, v interface{}, err ...bool) error {
+	return s.entity.ResponseMID(ctx, mid, v, err...)
 }
 
 // ID returns the session id
@@ -193,7 +199,7 @@ func (s *Session) SetDataEncoded(encodedData []byte) error {
 		return nil
 	}
 	var data map[string]interface{}
-	err := util.GobDecode(&data, encodedData)
+	err := json.Unmarshal(encodedData, &data)
 	if err != nil {
 		return err
 	}
@@ -207,7 +213,7 @@ func (s *Session) SetFrontendData(frontendID string, frontendSessionID int64) {
 }
 
 // Bind bind UID to current session
-func (s *Session) Bind(uid string) error {
+func (s *Session) Bind(ctx context.Context, uid string) error {
 	if uid == "" {
 		return constants.ErrIllegalUID
 	}
@@ -217,11 +223,13 @@ func (s *Session) Bind(uid string) error {
 	}
 
 	s.uid = uid
-	if OnSessionBind != nil {
-		err := OnSessionBind(s)
-		if err != nil {
-			s.uid = ""
-			return err
+	if len(sessionBindCallbacks) > 0 {
+		for _, cb := range sessionBindCallbacks {
+			err := cb(ctx, s)
+			if err != nil {
+				s.uid = ""
+				return err
+			}
 		}
 	}
 
@@ -231,7 +239,7 @@ func (s *Session) Bind(uid string) error {
 	} else {
 		// If frontentID is set this means it is a remote call and the current server
 		// is not the frontend server that received the user request
-		err := s.bindInFront()
+		err := s.bindInFront(ctx)
 		if err != nil {
 			logger.Log.Error("error while trying to push session to front: ", err)
 			s.uid = ""
@@ -239,6 +247,15 @@ func (s *Session) Bind(uid string) error {
 		}
 	}
 	return nil
+}
+
+// Kick kicks the user
+func (s *Session) Kick(ctx context.Context) error {
+	err := s.entity.Kick(ctx)
+	if err != nil {
+		return err
+	}
+	return s.entity.Close()
 }
 
 // OnClose adds the function it receives to the callbacks that will be called
@@ -254,6 +271,7 @@ func (s *Session) OnClose(c func()) error {
 // Close terminate current session, session related data will not be released,
 // all related data should be cleared explicitly in Session closed callback
 func (s *Session) Close() {
+	atomic.AddInt64(&SessionCount, -1)
 	sessionsByID.Delete(s.ID())
 	sessionsByUID.Delete(s.UID())
 	if s.IsFrontend && s.Subscription != nil {
@@ -541,44 +559,16 @@ func (s *Session) Value(key string) interface{} {
 	return s.data[key]
 }
 
-func (s *Session) bindInFront() error {
-	sessionData := &Data{
-		ID:  s.frontendSessionID,
-		UID: s.uid,
-	}
-	b, err := util.GobEncode(sessionData)
-	if err != nil {
-		return err
-	}
-	res, err := s.entity.SendRequest(s.frontendID, constants.SessionBindRoute, b)
-	if err != nil {
-		return err
-	}
-	logger.Log.Debug("session/bindInFront Got response: ", res.Data)
-	return nil
-
+func (s *Session) bindInFront(ctx context.Context) error {
+	return s.sendRequestToFront(ctx, constants.SessionBindRoute, false)
 }
 
 // PushToFront updates the session in the frontend
-func (s *Session) PushToFront() error {
+func (s *Session) PushToFront(ctx context.Context) error {
 	if s.IsFrontend {
 		return constants.ErrFrontSessionCantPushToFront
 	}
-	sessionData := &Data{
-		ID:   s.frontendSessionID,
-		UID:  s.uid,
-		Data: s.data,
-	}
-	b, err := util.GobEncode(sessionData)
-	if err != nil {
-		return err
-	}
-	res, err := s.entity.SendRequest(s.frontendID, constants.SessionPushRoute, b)
-	if err != nil {
-		return err
-	}
-	logger.Log.Debug("session/PushToFront Got response: ", res)
-	return nil
+	return s.sendRequestToFront(ctx, constants.SessionPushRoute, true)
 }
 
 // Clear releases all data related to current session
@@ -589,4 +579,24 @@ func (s *Session) Clear() {
 	s.uid = ""
 	s.data = map[string]interface{}{}
 	s.updateEncodedData()
+}
+
+func (s *Session) sendRequestToFront(ctx context.Context, route string, includeData bool) error {
+	sessionData := &protos.Session{
+		ID:  s.frontendSessionID,
+		Uid: s.uid,
+	}
+	if includeData {
+		sessionData.Data = s.encodedData
+	}
+	b, err := proto.Marshal(sessionData)
+	if err != nil {
+		return err
+	}
+	res, err := s.entity.SendRequest(ctx, s.frontendID, route, b)
+	if err != nil {
+		return err
+	}
+	logger.Log.Debugf("%s Got response: %+v", route, res)
+	return nil
 }

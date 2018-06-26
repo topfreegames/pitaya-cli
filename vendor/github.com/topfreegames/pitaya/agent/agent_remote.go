@@ -21,6 +21,7 @@
 package agent
 
 import (
+	"context"
 	"net"
 	"reflect"
 
@@ -40,10 +41,9 @@ import (
 
 // Remote corresponding to another server
 type Remote struct {
-	Session          *session.Session         // session
-	Srv              reflect.Value            // cached session reflect.Value, this avoids repeated calls to reflect.value(a.Session)
-	chDie            chan struct{}            // wait for close
-	messageEncoder   message.MessageEncoder
+	Session          *session.Session // session
+	chDie            chan struct{}    // wait for close
+	messageEncoder   message.Encoder
 	encoder          codec.PacketEncoder      // binary encoder
 	frontendID       string                   // the frontend that sent the request
 	reply            string                   // nats reply topic
@@ -61,7 +61,7 @@ func NewRemote(
 	serializer serialize.Serializer,
 	serviceDiscovery cluster.ServiceDiscovery,
 	frontendID string,
-	messageEncoder message.MessageEncoder,
+	messageEncoder message.Encoder,
 ) (*Remote, error) {
 	a := &Remote{
 		chDie:            make(chan struct{}),
@@ -71,7 +71,7 @@ func NewRemote(
 		rpcClient:        rpcClient,
 		serviceDiscovery: serviceDiscovery,
 		frontendID:       frontendID,
-		messageEncoder:  messageEncoder,
+		messageEncoder:   messageEncoder,
 	}
 
 	// binding session
@@ -82,9 +82,23 @@ func NewRemote(
 		return nil, err
 	}
 	a.Session = s
-	a.Srv = reflect.ValueOf(s)
 
 	return a, nil
+}
+
+// Kick kicks the player
+func (a *Remote) Kick(ctx context.Context) error {
+	if a.Session.UID() == "" {
+		return constants.ErrNoUIDBind
+	}
+	b, err := proto.Marshal(&protos.KickMsg{
+		UserId: a.Session.UID(),
+	})
+	if err != nil {
+		return err
+	}
+	_, err = a.SendRequest(ctx, a.frontendID, constants.KickRoute, b)
+	return err
 }
 
 // Push pushes the message to the player
@@ -102,14 +116,18 @@ func (a *Remote) Push(route string, v interface{}) error {
 			a.Session.ID(), a.Session.UID(), route, v)
 	}
 
+	sv, err := a.serviceDiscovery.GetServer(a.frontendID)
+	if err != nil {
+		return err
+	}
 	return a.sendPush(
 		pendingMessage{typ: message.Push, route: route, payload: v},
-		cluster.GetUserMessagesTopic(a.Session.UID()),
+		cluster.GetUserMessagesTopic(a.Session.UID(), sv.Type),
 	)
 }
 
 // ResponseMID reponds the message with mid to the player
-func (a *Remote) ResponseMID(mid uint, v interface{}, isError ...bool) error {
+func (a *Remote) ResponseMID(ctx context.Context, mid uint, v interface{}, isError ...bool) error {
 	err := false
 	if len(isError) > 0 {
 		err = isError[0]
@@ -128,7 +146,7 @@ func (a *Remote) ResponseMID(mid uint, v interface{}, isError ...bool) error {
 			a.Session.ID(), mid, v)
 	}
 
-	return a.send(pendingMessage{typ: message.Response, mid: mid, payload: v, err: err}, a.reply)
+	return a.send(pendingMessage{ctx: ctx, typ: message.Response, mid: mid, payload: v, err: err}, a.reply)
 }
 
 // Close closes the remote
@@ -199,7 +217,7 @@ func (a *Remote) sendPush(m pendingMessage, to string) (err error) {
 }
 
 // SendRequest sends a request to a server
-func (a *Remote) SendRequest(serverID, reqRoute string, v interface{}) (*protos.Response, error) {
+func (a *Remote) SendRequest(ctx context.Context, serverID, reqRoute string, v interface{}) (*protos.Response, error) {
 	r, err := route.Decode(reqRoute)
 	if err != nil {
 		return nil, err
@@ -216,5 +234,5 @@ func (a *Remote) SendRequest(serverID, reqRoute string, v interface{}) (*protos.
 	if err != nil {
 		return nil, err
 	}
-	return a.rpcClient.Call(protos.RPCType_User, r, nil, msg, server)
+	return a.rpcClient.Call(ctx, protos.RPCType_User, r, nil, msg, server)
 }
