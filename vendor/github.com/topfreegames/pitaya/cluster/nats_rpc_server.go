@@ -29,33 +29,45 @@ import (
 	"github.com/topfreegames/pitaya/config"
 	"github.com/topfreegames/pitaya/constants"
 	"github.com/topfreegames/pitaya/logger"
+	"github.com/topfreegames/pitaya/metrics"
 	"github.com/topfreegames/pitaya/protos"
 )
 
 // NatsRPCServer struct
 type NatsRPCServer struct {
-	connString         string
-	server             *Server
-	conn               *nats.Conn
-	pushBufferSize     int
-	messagesBufferSize int
-	config             *config.Config
-	stopChan           chan bool
-	subChan            chan *nats.Msg // subChan is the channel used by the server to receive network messages addressed to itself
-	unhandledReqCh     chan *protos.Request
-	userPushCh         chan *protos.Push
-	sub                *nats.Subscription
-	dropped            int
+	connString             string
+	maxReconnectionRetries int
+	server                 *Server
+	conn                   *nats.Conn
+	pushBufferSize         int
+	messagesBufferSize     int
+	config                 *config.Config
+	stopChan               chan bool
+	subChan                chan *nats.Msg // subChan is the channel used by the server to receive network messages addressed to itself
+	bindingsChan           chan *nats.Msg // bindingsChan receives notify from other servers on every user bind to session
+	unhandledReqCh         chan *protos.Request
+	userPushCh             chan *protos.Push
+	sub                    *nats.Subscription
+	dropped                int
+	metricsReporters       []metrics.Reporter
+	appDieChan             chan bool
 }
 
 // NewNatsRPCServer ctor
-func NewNatsRPCServer(config *config.Config, server *Server) (*NatsRPCServer, error) {
+func NewNatsRPCServer(
+	config *config.Config,
+	server *Server,
+	metricsReporters []metrics.Reporter,
+	appDieChan chan bool,
+) (*NatsRPCServer, error) {
 	ns := &NatsRPCServer{
-		config:         config,
-		server:         server,
-		stopChan:       make(chan bool),
-		unhandledReqCh: make(chan *protos.Request),
-		dropped:        0,
+		config:           config,
+		server:           server,
+		stopChan:         make(chan bool),
+		unhandledReqCh:   make(chan *protos.Request),
+		dropped:          0,
+		metricsReporters: metricsReporters,
+		appDieChan:       appDieChan,
 	}
 	if err := ns.configure(); err != nil {
 		return nil, err
@@ -69,6 +81,7 @@ func (ns *NatsRPCServer) configure() error {
 	if ns.connString == "" {
 		return constants.ErrNoNatsConnectionString
 	}
+	ns.maxReconnectionRetries = ns.config.GetInt("pitaya.cluster.rpc.server.nats.maxreconnectionretries")
 	ns.messagesBufferSize = ns.config.GetInt("pitaya.buffer.cluster.rpc.server.messages")
 	if ns.messagesBufferSize == 0 {
 		return constants.ErrNatsMessagesBufferSizeZero
@@ -78,20 +91,37 @@ func (ns *NatsRPCServer) configure() error {
 		return constants.ErrNatsPushBufferSizeZero
 	}
 	ns.subChan = make(chan *nats.Msg, ns.messagesBufferSize)
+	ns.bindingsChan = make(chan *nats.Msg, ns.messagesBufferSize)
 	// the reason this channel is buffered is that we can achieve more performance by not
 	// blocking producers on a massive push
 	ns.userPushCh = make(chan *protos.Push, ns.pushBufferSize)
 	return nil
 }
 
+// GetBindingsChannel gets the channel that will receive all bindings
+func (ns *NatsRPCServer) GetBindingsChannel() chan *nats.Msg {
+	return ns.bindingsChan
+}
+
 // GetUserMessagesTopic get the topic for user
-func GetUserMessagesTopic(uid string) string {
-	return fmt.Sprintf("pitaya/user/%s/push", uid)
+func GetUserMessagesTopic(uid string, svType string) string {
+	return fmt.Sprintf("pitaya/%s/user/%s/push", svType, uid)
+}
+
+// GetBindBroadcastTopic gets the topic on which bind events will be broadcasted
+func GetBindBroadcastTopic(svType string) string {
+	return fmt.Sprintf("pitaya/%s/bindings", svType)
+}
+
+// SubscribeToBindingsChannel subscribes to the channel that will receive binding notifications from other servers
+func (ns *NatsRPCServer) SubscribeToBindingsChannel() error {
+	_, err := ns.conn.ChanSubscribe(GetBindBroadcastTopic(ns.server.Type), ns.bindingsChan)
+	return err
 }
 
 // SubscribeToUserMessages subscribes to user msg channel
-func (ns *NatsRPCServer) SubscribeToUserMessages(uid string) (*nats.Subscription, error) {
-	subs, err := ns.conn.Subscribe(GetUserMessagesTopic(uid), func(msg *nats.Msg) {
+func (ns *NatsRPCServer) SubscribeToUserMessages(uid string, svType string) (*nats.Subscription, error) {
+	subs, err := ns.conn.Subscribe(GetUserMessagesTopic(uid, svType), func(msg *nats.Msg) {
 		push := &protos.Push{}
 		err := proto.Unmarshal(msg.Data, push)
 		if err != nil {
@@ -107,13 +137,16 @@ func (ns *NatsRPCServer) SubscribeToUserMessages(uid string) (*nats.Subscription
 
 func (ns *NatsRPCServer) handleMessages() {
 	defer (func() {
+		ns.conn.Close()
 		close(ns.unhandledReqCh)
 		close(ns.subChan)
+		close(ns.bindingsChan)
 	})()
 	maxPending := float64(0)
 	for {
 		select {
 		case msg := <-ns.subChan:
+			ns.reportMetrics()
 			dropped, err := ns.sub.Dropped()
 			if err != nil {
 				logger.Log.Errorf("error getting number of dropped messages: %s", err.Error())
@@ -154,7 +187,7 @@ func (ns *NatsRPCServer) GetUserPushChannel() chan *protos.Push {
 func (ns *NatsRPCServer) Init() error {
 	// TODO should we have concurrency here? it feels like we should
 	go ns.handleMessages()
-	conn, err := setupNatsConn(ns.connString)
+	conn, err := setupNatsConn(ns.connString, ns.appDieChan, nats.MaxReconnects(ns.maxReconnectionRetries))
 	if err != nil {
 		return err
 	}
@@ -162,7 +195,7 @@ func (ns *NatsRPCServer) Init() error {
 	if ns.sub, err = ns.subscribe(getChannel(ns.server.Type, ns.server.ID)); err != nil {
 		return err
 	}
-	return nil
+	return ns.SubscribeToBindingsChannel()
 }
 
 // AfterInit runs after initialization
@@ -182,4 +215,41 @@ func (ns *NatsRPCServer) subscribe(topic string) (*nats.Subscription, error) {
 }
 
 func (ns *NatsRPCServer) stop() {
+}
+
+func (ns *NatsRPCServer) reportMetrics() {
+	if ns.metricsReporters != nil {
+		for _, mr := range ns.metricsReporters {
+			if err := mr.ReportGauge(metrics.DroppedMessages, map[string]string{}, float64(ns.dropped)); err != nil {
+				logger.Log.Warnf("failed to report dropped message: %s", err.Error())
+			}
+
+			// subchan
+			subChanCapacity := ns.messagesBufferSize - len(ns.subChan)
+			if subChanCapacity == 0 {
+				logger.Log.Warn("subChan is at maximum capacity")
+			}
+			if err := mr.ReportGauge(metrics.ChannelCapacity, map[string]string{"channel": "rpc_server_subchan"}, float64(subChanCapacity)); err != nil {
+				logger.Log.Warnf("failed to report subChan queue capacity: %s", err.Error())
+			}
+
+			// bindingschan
+			bindingsChanCapacity := ns.messagesBufferSize - len(ns.bindingsChan)
+			if bindingsChanCapacity == 0 {
+				logger.Log.Warn("bindingsChan is at maximum capacity")
+			}
+			if err := mr.ReportGauge(metrics.ChannelCapacity, map[string]string{"channel": "rpc_server_bindingschan"}, float64(bindingsChanCapacity)); err != nil {
+				logger.Log.Warnf("failed to report bindingsChan capacity: %s", err.Error())
+			}
+
+			// userpushch
+			userPushChanCapacity := ns.messagesBufferSize - len(ns.bindingsChan)
+			if userPushChanCapacity == 0 {
+				logger.Log.Warn("userPushChan is at maximum capacity")
+			}
+			if err := mr.ReportGauge(metrics.ChannelCapacity, map[string]string{"channel": "rpc_server_userpushchan"}, float64(userPushChanCapacity)); err != nil {
+				logger.Log.Warnf("failed to report userPushCh capacity: %s", err.Error())
+			}
+		}
+	}
 }

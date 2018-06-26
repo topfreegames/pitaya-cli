@@ -21,8 +21,11 @@
 package remote
 
 import (
+	"context"
+
 	"github.com/topfreegames/pitaya/component"
 	"github.com/topfreegames/pitaya/constants"
+	"github.com/topfreegames/pitaya/protos"
 	"github.com/topfreegames/pitaya/session"
 )
 
@@ -32,25 +35,42 @@ type Sys struct {
 }
 
 // BindSession binds the local session
-func (s *Sys) BindSession(sessionData *session.Data) ([]byte, error) {
+func (s *Sys) BindSession(ctx context.Context, sessionData *protos.Session) (*protos.Response, error) {
 	sess := session.GetSessionByID(sessionData.ID)
 	if sess == nil {
 		return nil, constants.ErrSessionNotFound
 	}
-	if err := sess.Bind(sessionData.UID); err != nil {
+	if err := sess.Bind(ctx, sessionData.Uid); err != nil {
 		return nil, err
 	}
-	return []byte("ack"), nil
+	return &protos.Response{Data: []byte("ack")}, nil
 }
 
 // PushSession updates the local session
-func (s *Sys) PushSession(sessionData *session.Data) ([]byte, error) {
+func (s *Sys) PushSession(ctx context.Context, sessionData *protos.Session) (*protos.Response, error) {
 	sess := session.GetSessionByID(sessionData.ID)
 	if sess == nil {
 		return nil, constants.ErrSessionNotFound
 	}
-	if err := sess.SetData(sessionData.Data); err != nil {
+	if err := sess.SetDataEncoded(sessionData.Data); err != nil {
 		return nil, err
 	}
-	return []byte("ack"), nil
+	return &protos.Response{Data: []byte("ack")}, nil
+}
+
+// Kick kicks a local player
+func (s *Sys) Kick(ctx context.Context, msg *protos.KickMsg) (*protos.KickAnswer, error) {
+	res := &protos.KickAnswer{
+		Kicked: false,
+	}
+	sess := session.GetSessionByUID(msg.GetUserId())
+	if sess == nil {
+		return res, constants.ErrSessionNotFound
+	}
+	err := sess.Kick(ctx)
+	if err != nil {
+		return res, err
+	}
+	res.Kicked = true
+	return res, nil
 }

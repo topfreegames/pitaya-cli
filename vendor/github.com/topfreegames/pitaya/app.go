@@ -21,7 +21,7 @@
 package pitaya
 
 import (
-	"encoding/gob"
+	"context"
 	"os"
 	"os/signal"
 	"reflect"
@@ -31,24 +31,28 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/spf13/viper"
 	"github.com/topfreegames/pitaya/acceptor"
 	"github.com/topfreegames/pitaya/cluster"
 	"github.com/topfreegames/pitaya/component"
 	"github.com/topfreegames/pitaya/config"
 	"github.com/topfreegames/pitaya/constants"
+	pcontext "github.com/topfreegames/pitaya/context"
 	"github.com/topfreegames/pitaya/errors"
 	"github.com/topfreegames/pitaya/internal/codec"
 	"github.com/topfreegames/pitaya/internal/message"
 	"github.com/topfreegames/pitaya/logger"
+	"github.com/topfreegames/pitaya/metrics"
+	mods "github.com/topfreegames/pitaya/modules"
 	"github.com/topfreegames/pitaya/remote"
-	"github.com/topfreegames/pitaya/route"
 	"github.com/topfreegames/pitaya/router"
 	"github.com/topfreegames/pitaya/serialize"
 	"github.com/topfreegames/pitaya/serialize/json"
 	"github.com/topfreegames/pitaya/service"
 	"github.com/topfreegames/pitaya/session"
 	"github.com/topfreegames/pitaya/timer"
+	"github.com/topfreegames/pitaya/tracing"
 )
 
 // ServerMode represents a server mode
@@ -71,12 +75,13 @@ type App struct {
 	dieChan          chan bool
 	heartbeat        time.Duration
 	onSessionBind    func(*session.Session)
-	messageEncoder   message.MessageEncoder
+	messageEncoder   message.Encoder
 	packetDecoder    codec.PacketDecoder
 	packetEncoder    codec.PacketEncoder
 	router           *router.Router
 	rpcClient        cluster.RPCClient
 	rpcServer        cluster.RPCServer
+	metricsReporters []metrics.Reporter
 	running          bool
 	serializer       serialize.Serializer
 	server           *cluster.Server
@@ -128,9 +133,24 @@ func Configure(
 	app.server.Frontend = isFrontend
 	app.server.Type = serverType
 	app.serverMode = serverMode
-	app.configured = true
 	app.server.Metadata = serverMetadata
-	app.messageEncoder = message.NewEncoder(app.config.GetBool("pitaya.dataCompression"))
+	app.messageEncoder = message.NewMessagesEncoder(app.config.GetBool("pitaya.handler.messages.compression"))
+	app.configured = true
+	app.metricsReporters = make([]metrics.Reporter, 0)
+
+	defaultTags := app.config.GetStringMapString("pitaya.metrics.tags")
+	AddMetricsReporter(metrics.GetPrometheusReporter(serverType, app.config.GetString("pitaya.game"), app.config.GetInt("pitaya.metrics.prometheus.port"), defaultTags))
+
+	if app.config.GetBool("pitaya.metrics.statsd.enabled") {
+		logger.Log.Infof("statsd is enabled, configuring the metrics reporter with host: %s", app.config.Get("pitaya.metrics.statsd.host"))
+		metricsReporter, err := metrics.NewStatsdReporter(app.config, serverType, defaultTags)
+		if err != nil {
+			logger.Log.Errorf("failed to start statds metrics reporter, skipping %v", err)
+		} else {
+			logger.Log.Info("successfully configured statsd metrics reporter")
+			app.metricsReporters = append(app.metricsReporters, metricsReporter)
+		}
+	}
 }
 
 // AddAcceptor adds a new acceptor to app
@@ -140,6 +160,11 @@ func AddAcceptor(ac acceptor.Acceptor) {
 		return
 	}
 	app.acceptors = append(app.acceptors, ac)
+}
+
+// GetDieChan gets the channel that the app sinalizes when its going to die
+func GetDieChan() chan bool {
+	return app.dieChan
 }
 
 // SetDebug toggles debug on/off
@@ -167,15 +192,20 @@ func SetLogger(l logger.Logger) {
 	logger.Log = l
 }
 
+// GetServerID returns the generated server id
+func GetServerID() string {
+	return app.server.ID
+}
+
 // SetRPCServer to be used
 func SetRPCServer(s cluster.RPCServer) {
 	app.rpcServer = s
 	if reflect.TypeOf(s) == reflect.TypeOf(&cluster.NatsRPCServer{}) {
 		// When using nats rpc server the server must start listening to messages
 		// destined to the userID that's binding
-		session.SetOnSessionBind(func(s *session.Session) error {
+		session.OnSessionBind(func(ctx context.Context, s *session.Session) error {
 			if app.server.Frontend && app.rpcServer != nil {
-				subs, err := app.rpcServer.(*cluster.NatsRPCServer).SubscribeToUserMessages(s.UID())
+				subs, err := app.rpcServer.(*cluster.NatsRPCServer).SubscribeToUserMessages(s.UID(), app.server.Type)
 				if err != nil {
 					return err
 				}
@@ -202,6 +232,26 @@ func SetSerializer(seri serialize.Serializer) {
 	app.serializer = seri
 }
 
+// GetSerializer gets the app serializer
+func GetSerializer() serialize.Serializer {
+	return app.serializer
+}
+
+// GetServer returns the server with the specified id
+func GetServer(id string) (*cluster.Server, error) {
+	return app.serviceDiscovery.GetServer(id)
+}
+
+// GetServersByType get all servers of type
+func GetServersByType(t string) (map[string]*cluster.Server, error) {
+	return app.serviceDiscovery.GetServersByType(t)
+}
+
+// AddMetricsReporter to be used
+func AddMetricsReporter(mr metrics.Reporter) {
+	app.metricsReporters = append(app.metricsReporters, mr)
+}
+
 func startDefaultSD() {
 	// initialize default service discovery
 	var err error
@@ -216,10 +266,7 @@ func startDefaultSD() {
 
 func startDefaultRPCServer() {
 	// initialize default rpc server
-	rpcServer, err := cluster.NewNatsRPCServer(
-		app.config,
-		app.server,
-	)
+	rpcServer, err := cluster.NewNatsRPCServer(app.config, app.server, app.metricsReporters, app.dieChan)
 	if err != nil {
 		logger.Log.Fatalf("error starting cluster rpc server component: %s", err.Error())
 	}
@@ -228,7 +275,7 @@ func startDefaultRPCServer() {
 
 func startDefaultRPCClient() {
 	// initialize default rpc client
-	rpcClient, err := cluster.NewNatsRPCClient(app.config, app.server)
+	rpcClient, err := cluster.NewNatsRPCClient(app.config, app.server, app.metricsReporters, app.dieChan)
 	if err != nil {
 		logger.Log.Fatalf("error starting cluster rpc client component: %s", err.Error())
 	}
@@ -236,7 +283,6 @@ func startDefaultRPCClient() {
 }
 
 func initSysRemotes() {
-	gob.Register(&session.Data{})
 	sys := &remote.Sys{}
 	RegisterRemote(sys,
 		component.WithName("sys"),
@@ -284,6 +330,7 @@ func Start() {
 			app.serializer,
 			app.router,
 			app.messageEncoder,
+			app.server,
 		)
 		initSysRemotes()
 	}
@@ -300,6 +347,7 @@ func Start() {
 		app.server,
 		remoteService,
 		app.messageEncoder,
+		app.metricsReporters,
 	)
 
 	listen()
@@ -310,14 +358,15 @@ func Start() {
 	}()
 
 	sg := make(chan os.Signal)
-	signal.Notify(sg, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGKILL)
+	signal.Notify(sg, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGKILL, syscall.SIGTERM)
 
 	// stop server
 	select {
 	case <-app.dieChan:
-		logger.Log.Warn("The app will shutdown in a few seconds")
+		logger.Log.Warn("the app will shutdown in a few seconds")
 	case s := <-sg:
-		logger.Log.Warn("got signal", s)
+		logger.Log.Warn("got signal", s, "shutting down...")
+		close(app.dieChan)
 	}
 
 	logger.Log.Warn("server is stopping...")
@@ -350,8 +399,16 @@ func listen() {
 
 		logger.Log.Infof("listening with acceptor %s on addr %s", reflect.TypeOf(a), a.GetAddr())
 	}
+	if app.serverMode == Cluster && app.server.Frontend && reflect.TypeOf(app.rpcServer) == reflect.TypeOf(&cluster.NatsRPCServer{}) {
+		if app.config.GetBool("pitaya.session.unique") {
+			unique := mods.NewUniqueSession(app.server, app.rpcServer.(*cluster.NatsRPCServer), app.rpcClient.(*cluster.NatsRPCClient))
+			RegisterModule(unique, "uniqueSession")
+		}
+	}
 
 	startModules()
+
+	logger.Log.Info("all modules started!")
 
 	// this handles remote messages
 	if app.rpcServer != nil {
@@ -376,11 +433,7 @@ func SetDictionary(dict map[string]uint16) error {
 // AddRoute adds a routing function to a server type
 func AddRoute(
 	serverType string,
-	routingFunction func(
-		session *session.Session,
-		route *route.Route,
-		servers map[string]*cluster.Server,
-	) (*cluster.Server, error),
+	routingFunction router.RoutingFunc,
 ) error {
 	if app.router != nil {
 		if app.running {
@@ -395,10 +448,35 @@ func AddRoute(
 
 // Shutdown send a signal to let 'pitaya' shutdown itself.
 func Shutdown() {
-	close(app.dieChan)
+	select {
+	case <-app.dieChan: // prevent closing closed channel
+	default:
+		close(app.dieChan)
+	}
 }
 
 // Error creates a new error with a code, message and metadata
 func Error(err error, code string, metadata ...map[string]string) *errors.Error {
 	return errors.NewError(err, code, metadata...)
+}
+
+// GetSessionFromCtx retrieves a session from a given context
+func GetSessionFromCtx(ctx context.Context) *session.Session {
+	return ctx.Value(constants.SessionCtxKey).(*session.Session)
+}
+
+// AddToPropagateCtx adds a key and value that will be propagated through RPC calls
+func AddToPropagateCtx(ctx context.Context, key string, val interface{}) context.Context {
+	return pcontext.AddToPropagateCtx(ctx, key, val)
+}
+
+// GetFromPropagateCtx adds a key and value that came through RPC calls
+func GetFromPropagateCtx(ctx context.Context, key string) interface{} {
+	return pcontext.GetFromPropagateCtx(ctx, key)
+}
+
+// ExtractSpan retrieves an opentracing span context from the given context
+// The span context can be received directly or via an RPC call
+func ExtractSpan(ctx context.Context) (opentracing.SpanContext, error) {
+	return tracing.ExtractSpan(ctx)
 }

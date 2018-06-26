@@ -32,7 +32,7 @@ import (
 )
 
 var pClient = client.New(logrus.InfoLevel)
-var disconnectedCh chan struct{}
+var disconnectedCh chan bool
 
 func registerRequest(shell *ishell.Shell) {
 	shell.AddCmd(&ishell.Cmd{
@@ -52,7 +52,10 @@ func registerRequest(shell *ishell.Shell) {
 			if len(c.RawArgs) > 2 {
 				data = []byte(c.RawArgs[2])
 			}
-			pClient.SendRequest(route, data)
+			_, err := pClient.SendRequest(route, data)
+			if err != nil {
+				c.Println(err)
+			}
 		},
 	})
 }
@@ -75,7 +78,10 @@ func registerNotify(shell *ishell.Shell) {
 			if len(c.RawArgs) > 2 {
 				data = []byte(c.RawArgs[2])
 			}
-			pClient.SendNotify(route, data)
+			if err := pClient.SendNotify(route, data); err != nil {
+				c.Println(err)
+				c.Err(err)
+			}
 		},
 	})
 }
@@ -85,7 +91,10 @@ func registerDisconnect(shell *ishell.Shell) {
 		Name: "disconnect",
 		Help: "disconnects from pitaya server",
 		Func: func(c *ishell.Context) {
-			pClient.Disconnect()
+			if pClient.Connected {
+				disconnectedCh <- true
+				pClient.Disconnect()
+			}
 		},
 	})
 }
@@ -111,14 +120,22 @@ func registerConnect(shell *ishell.Shell) {
 				c.Err(err)
 			} else {
 				c.Println("connected!")
+				disconnectedCh = make(chan bool, 1)
+				go readServerMessages(shell)
 			}
 		},
 	})
 }
 
 func readServerMessages(c *ishell.Shell) {
-	for m := range pClient.IncomingMsgChan {
-		c.Printf("sv-> %s\n", string(m.Data))
+	for {
+		select {
+		case <-disconnectedCh:
+			close(disconnectedCh)
+			return
+		case m := <-pClient.IncomingMsgChan:
+			c.Printf("sv-> %s\n", string(m.Data))
+		}
 	}
 }
 
@@ -142,8 +159,6 @@ func main() {
 	registerDisconnect(shell)
 	registerRequest(shell)
 	registerNotify(shell)
-
-	go readServerMessages(shell)
 
 	shell.Run()
 }

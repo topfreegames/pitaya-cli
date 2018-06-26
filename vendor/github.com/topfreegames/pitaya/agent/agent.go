@@ -21,11 +21,11 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
-	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -35,9 +35,11 @@ import (
 	"github.com/topfreegames/pitaya/internal/message"
 	"github.com/topfreegames/pitaya/internal/packet"
 	"github.com/topfreegames/pitaya/logger"
+	"github.com/topfreegames/pitaya/metrics"
 	"github.com/topfreegames/pitaya/protos"
 	"github.com/topfreegames/pitaya/serialize"
 	"github.com/topfreegames/pitaya/session"
+	"github.com/topfreegames/pitaya/tracing"
 	"github.com/topfreegames/pitaya/util"
 	"github.com/topfreegames/pitaya/util/compression"
 )
@@ -50,11 +52,12 @@ var (
 	once sync.Once
 )
 
+const handlerType = "handler"
+
 type (
 	// Agent corresponds to a user and is used for storing raw Conn information
 	Agent struct {
 		Session            *session.Session    // session
-		Srv                reflect.Value       // cached session reflect.Value, this avoids repeated calls to reflect.value(a.Session)
 		appDieChan         chan bool           // app die channel
 		chDie              chan struct{}       // wait for close
 		chSend             chan pendingMessage // push message queue
@@ -68,10 +71,12 @@ type (
 		messagesBufferSize int                  // size of the pending messages buffer
 		serializer         serialize.Serializer // message serializer
 		state              int32                // current agent state
-		messageEncoder     message.MessageEncoder
+		messageEncoder     message.Encoder
+		metricsReporters   []metrics.Reporter
 	}
 
 	pendingMessage struct {
+		ctx     context.Context
 		typ     message.Type // message type
 		route   string       // message route (push)
 		mid     uint         // response message id (response)
@@ -89,11 +94,12 @@ func NewAgent(
 	heartbeatTime time.Duration,
 	messagesBufferSize int,
 	dieChan chan bool,
-	messageEncoder message.MessageEncoder,
+	messageEncoder message.Encoder,
+	metricsReporters []metrics.Reporter,
 ) *Agent {
 	// initialize heartbeat and handshake data on first player connection
 	once.Do(func() {
-		hbdEncode(heartbeatTime, packetEncoder, messageEncoder.CompressEnabled())
+		hbdEncode(heartbeatTime, packetEncoder, messageEncoder.IsCompressionEnabled())
 	})
 
 	a := &Agent{
@@ -111,13 +117,13 @@ func NewAgent(
 		serializer:         serializer,
 		state:              constants.StatusStart,
 		messageEncoder:     messageEncoder,
+		metricsReporters:   metricsReporters,
 	}
 
 	// bindng session
 	s := session.New(a, true)
+	metrics.ReportNumberOfConnectedClients(metricsReporters, session.SessionCount)
 	a.Session = s
-	a.Srv = reflect.ValueOf(s)
-
 	return a
 }
 
@@ -127,6 +133,7 @@ func (a *Agent) send(m pendingMessage) (err error) {
 			err = constants.ErrBrokenPipe
 		}
 	}()
+	a.reportChannelSize()
 	a.chSend <- m
 	return
 }
@@ -137,11 +144,6 @@ func (a *Agent) Push(route string, v interface{}) error {
 		return constants.ErrBrokenPipe
 	}
 
-	if len(a.chSend) >= a.messagesBufferSize {
-		// TODO monitorar
-		logger.Log.Warnf("chSend is at maximum capacity, channel len: %d", len(a.chSend))
-	}
-
 	switch d := v.(type) {
 	case []byte:
 		logger.Log.Debugf("Type=Push, ID=%d, UID=%d, Route=%s, Data=%dbytes",
@@ -150,28 +152,28 @@ func (a *Agent) Push(route string, v interface{}) error {
 		logger.Log.Debugf("Type=Push, ID=%d, UID=%d, Route=%s, Data=%+v",
 			a.Session.ID(), a.Session.UID(), route, v)
 	}
-
 	return a.send(pendingMessage{typ: message.Push, route: route, payload: v})
 }
 
 // ResponseMID implementation for session.NetworkEntity interface
 // Response message to session
-func (a *Agent) ResponseMID(mid uint, v interface{}, isError ...bool) error {
+func (a *Agent) ResponseMID(ctx context.Context, mid uint, v interface{}, isError ...bool) error {
 	err := false
 	if len(isError) > 0 {
 		err = isError[0]
 	}
 	if a.GetStatus() == constants.StatusClosed {
-		return constants.ErrBrokenPipe
+		err := constants.ErrBrokenPipe
+		tracing.FinishSpan(ctx, err)
+		metrics.ReportTimingFromCtx(ctx, a.metricsReporters, handlerType, true)
+		return err
 	}
 
 	if mid <= 0 {
-		return constants.ErrSessionOnNotify
-	}
-
-	if len(a.chSend) >= a.messagesBufferSize {
-		// TODO monitorar
-		logger.Log.Warnf("chSend is at maximum capacity, channel len: %d", len(a.chSend))
+		err := constants.ErrSessionOnNotify
+		tracing.FinishSpan(ctx, err)
+		metrics.ReportTimingFromCtx(ctx, a.metricsReporters, handlerType, true)
+		return err
 	}
 
 	switch d := v.(type) {
@@ -183,7 +185,7 @@ func (a *Agent) ResponseMID(mid uint, v interface{}, isError ...bool) error {
 			a.Session.ID(), a.Session.UID(), mid, v)
 	}
 
-	return a.send(pendingMessage{typ: message.Response, mid: mid, payload: v, err: err})
+	return a.send(pendingMessage{ctx: ctx, typ: message.Response, mid: mid, payload: v, err: err})
 }
 
 // Close closes the agent, cleans inner state and closes low-level connection.
@@ -208,6 +210,8 @@ func (a *Agent) Close() error {
 		onSessionClosed(a.Session)
 	}
 
+	metrics.ReportNumberOfConnectedClients(a.metricsReporters, session.SessionCount)
+
 	return a.conn.Close()
 }
 
@@ -225,6 +229,17 @@ func (a *Agent) String() string {
 // GetStatus gets the status
 func (a *Agent) GetStatus() int32 {
 	return atomic.LoadInt32(&a.state)
+}
+
+// Kick sends a kick packet to a client
+func (a *Agent) Kick(ctx context.Context) error {
+	// packet encode
+	p, err := a.encoder.Encode(packet.Kick, nil)
+	if err != nil {
+		return err
+	}
+	_, err = a.conn.Write(p)
+	return err
 }
 
 // SetLastAt sets the last at to now
@@ -318,6 +333,10 @@ func (a *Agent) write() {
 				logger.Log.Error(err.Error())
 				payload, err = util.GetErrorPayload(a.serializer, err)
 				if err != nil {
+					tracing.FinishSpan(data.ctx, err)
+					if data.typ == message.Response {
+						metrics.ReportTimingFromCtx(data.ctx, a.metricsReporters, handlerType, true)
+					}
 					logger.Log.Error("cannot serialize message and respond to the client ", err.Error())
 					break
 				}
@@ -333,6 +352,10 @@ func (a *Agent) write() {
 			}
 			em, err := a.messageEncoder.Encode(m)
 			if err != nil {
+				tracing.FinishSpan(data.ctx, err)
+				if data.typ == message.Response {
+					metrics.ReportTimingFromCtx(data.ctx, a.metricsReporters, handlerType, true)
+				}
 				logger.Log.Error(err.Error())
 				break
 			}
@@ -340,15 +363,26 @@ func (a *Agent) write() {
 			// packet encode
 			p, err := a.encoder.Encode(packet.Data, em)
 			if err != nil {
+				tracing.FinishSpan(data.ctx, err)
+				if data.typ == message.Response {
+					metrics.ReportTimingFromCtx(data.ctx, a.metricsReporters, handlerType, true)
+				}
 				logger.Log.Error(err)
 				break
 			}
 			// close agent if low-level Conn broken
 			if _, err := a.conn.Write(p); err != nil {
+				tracing.FinishSpan(data.ctx, err)
+				if data.typ == message.Response {
+					metrics.ReportTimingFromCtx(data.ctx, a.metricsReporters, handlerType, true)
+				}
 				logger.Log.Error(err.Error())
 				return
 			}
-
+			tracing.FinishSpan(data.ctx, nil)
+			if data.typ == message.Response {
+				metrics.ReportTimingFromCtx(data.ctx, a.metricsReporters, handlerType, m.Err)
+			}
 		case <-a.chStopWrite:
 			return
 		}
@@ -356,18 +390,18 @@ func (a *Agent) write() {
 }
 
 // SendRequest sends a request to a server
-func (a *Agent) SendRequest(serverID, route string, v interface{}) (*protos.Response, error) {
+func (a *Agent) SendRequest(ctx context.Context, serverID, route string, v interface{}) (*protos.Response, error) {
 	return nil, errors.New("not implemented")
 }
 
 // AnswerWithError answers with an error
-func (a *Agent) AnswerWithError(mid uint, err error) {
+func (a *Agent) AnswerWithError(ctx context.Context, mid uint, err error) {
 	p, e := util.GetErrorPayload(a.serializer, err)
 	if e != nil {
 		logger.Log.Error("error answering the player with an error: ", e.Error())
 		return
 	}
-	e = a.Session.ResponseMID(mid, p, true)
+	e = a.Session.ResponseMID(ctx, mid, p, true)
 	if e != nil {
 		logger.Log.Error("error answering the player with an error: ", e.Error())
 	}
@@ -405,5 +439,17 @@ func hbdEncode(heartbeatTimeout time.Duration, packetEncoder codec.PacketEncoder
 	hbd, err = packetEncoder.Encode(packet.Heartbeat, nil)
 	if err != nil {
 		panic(err)
+	}
+}
+
+func (a *Agent) reportChannelSize() {
+	chSendCapacity := a.messagesBufferSize - len(a.chSend)
+	if chSendCapacity == 0 {
+		logger.Log.Warnf("chSend is at maximum capacity")
+	}
+	for _, mr := range a.metricsReporters {
+		if err := mr.ReportGauge(metrics.ChannelCapacity, map[string]string{"channel": "agent_chsend"}, float64(chSendCapacity)); err != nil {
+			logger.Log.Warnf("failed to report chSend channel capaacity: %s", err.Error())
+		}
 	}
 }

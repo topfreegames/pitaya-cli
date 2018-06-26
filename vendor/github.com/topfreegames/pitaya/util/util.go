@@ -21,11 +21,10 @@
 package util
 
 import (
-	"bytes"
-	"encoding/gob"
 	"errors"
 	"os"
 	"reflect"
+	"runtime/debug"
 
 	"github.com/topfreegames/pitaya/constants"
 	e "github.com/topfreegames/pitaya/errors"
@@ -40,6 +39,7 @@ func Pcall(method reflect.Method, args []reflect.Value) (rets interface{}, err e
 	defer func() {
 		if rec := recover(); rec != nil {
 			logger.Log.Errorf("pitaya/dispatch: %v", rec)
+			logger.Log.Debugf("%s", debug.Stack())
 			if s, ok := rec.(string); ok {
 				err = errors.New(s)
 			} else {
@@ -54,9 +54,6 @@ func Pcall(method reflect.Method, args []reflect.Value) (rets interface{}, err e
 	if len(r) == 2 {
 		if v := r[1].Interface(); v != nil {
 			err = v.(error)
-			if err != nil {
-				logger.Log.Error(err.Error())
-			}
 		} else if !r[0].IsNil() {
 			rets = r[0].Interface()
 		} else {
@@ -86,20 +83,6 @@ func SerializeOrRaw(serializer serialize.Serializer, v interface{}) ([]byte, err
 		return nil, err
 	}
 	return data, nil
-}
-
-// GobEncode encodes interfaces with gob
-func GobEncode(args ...interface{}) ([]byte, error) {
-	buf := bytes.NewBuffer([]byte(nil))
-	if err := gob.NewEncoder(buf).Encode(args); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
-// GobDecode decodes a gob encoded binary
-func GobDecode(reply interface{}, data []byte) error {
-	return gob.NewDecoder(bytes.NewReader(data)).Decode(reply)
 }
 
 // FileExists tells if a file exists
