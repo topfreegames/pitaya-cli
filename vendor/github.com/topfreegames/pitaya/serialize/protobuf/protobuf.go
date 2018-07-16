@@ -1,4 +1,4 @@
-// Copyright (c) TFG Co. All Rights Reserved.
+// Copyright (c) nano Author and TFG Co. All Rights Reserved.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -18,29 +18,36 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-package cluster
+package protobuf
 
 import (
-	"context"
-
-	"github.com/topfreegames/pitaya/interfaces"
-	"github.com/topfreegames/pitaya/internal/message"
-	"github.com/topfreegames/pitaya/protos"
-	"github.com/topfreegames/pitaya/route"
-	"github.com/topfreegames/pitaya/session"
+	"github.com/gogo/protobuf/proto"
+	"github.com/topfreegames/pitaya/constants"
 )
 
-// RPCServer interface
-type RPCServer interface {
-	GetUnhandledRequestsChannel() chan *protos.Request
-	// TODO user pushs and requests can be merged and processing would have a switch
-	GetUserPushChannel() chan *protos.Push
-	interfaces.Module
+// Serializer implements the serialize.Serializer interface
+type Serializer struct{}
+
+// NewSerializer returns a new Serializer.
+func NewSerializer() *Serializer {
+	return &Serializer{}
 }
 
-// RPCClient interface
-type RPCClient interface {
-	Send(route string, data []byte) error
-	Call(ctx context.Context, rpcType protos.RPCType, route *route.Route, session *session.Session, msg *message.Message, server *Server) (*protos.Response, error)
-	interfaces.Module
+// Marshal returns the protobuf encoding of v.
+func (s *Serializer) Marshal(v interface{}) ([]byte, error) {
+	pb, ok := v.(proto.Message)
+	if !ok {
+		return nil, constants.ErrWrongValueType
+	}
+	return proto.Marshal(pb)
+}
+
+// Unmarshal parses the protobuf-encoded data and stores the result
+// in the value pointed to by v.
+func (s *Serializer) Unmarshal(data []byte, v interface{}) error {
+	pb, ok := v.(proto.Message)
+	if !ok {
+		return constants.ErrWrongValueType
+	}
+	return proto.Unmarshal(data, pb)
 }

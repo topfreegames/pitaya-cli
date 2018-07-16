@@ -1,7 +1,10 @@
 TESTABLE_PACKAGES = `go list ./... | grep -v examples | grep -v constants | grep -v mocks | grep -v helpers | grep -v interfaces | grep -v protos | grep -v e2e | grep -v benchmark`
 
-setup:
+setup: init-submodules
 	@dep ensure
+
+init-submodules:
+	@git submodule init
 
 setup-ci:
 	@go get github.com/mattn/goveralls
@@ -17,7 +20,7 @@ run-chat-example:
 	@cd examples/demo/chat/ && go run main.go
 
 run-cluster-example-frontend:
-	@go run examples/demo/cluster/main.go
+	@PITAYA_METRICS_PROMETHEUS_PORT=9090 go run examples/demo/cluster/main.go
 
 run-cluster-protobuf-frontend-example:
 	@cd examples/demo/cluster_protobuf && go run main.go
@@ -26,14 +29,15 @@ run-cluster-protobuf-backend-example:
 	@cd examples/demo/cluster_protobuf && go run main.go --port 3251 --type room --frontend=false
 
 run-cluster-example-backend:
-	@go run examples/demo/cluster/main.go --port 3251 --type room --frontend=false
+	@PITAYA_METRICS_PROMETHEUS_PORT=9091 go run examples/demo/cluster/main.go --port 3251 --type room --frontend=false
 
 run-tadpole-example:
 	@go run examples/demo/tadpole/main.go
 
 protos-compile:
 	@cd benchmark/testdata && ./gen_proto.sh
-	@cd protos && protoc --gogofaster_out=. *.proto
+	@protoc -I pitaya-protos/ pitaya-protos/*.proto --gogofaster_out=plugins=grpc:protos
+	@protoc -I pitaya-protos/test pitaya-protos/test/*.proto --gogofaster_out=protos/test
 
 rm-test-temp-files:
 	@rm -f cluster/127.0.0.1* 127.0.0.1*
@@ -45,25 +49,51 @@ ensure-testing-bin:
 ensure-testing-deps:
 	@cd ./examples/testing && docker-compose up -d
 
+ensure-e2e-deps-grpc:
+	@cd ./examples/testing && docker-compose up -d etcd
+
 kill-testing-deps:
 	@cd ./examples/testing && docker-compose down; true
 
-e2e-test: ensure-testing-deps ensure-testing-bin
-	@echo "===============RUNNING E2E TESTS==============="
+e2e-test: e2e-test-nats e2e-test-grpc
+
+e2e-test-nats: ensure-testing-deps ensure-testing-bin
+	@echo "===============RUNNING E2E NATS TESTS==============="
 	@go test ./e2e/e2e_test.go -update
 
-benchmark-test: ensure-testing-deps ensure-testing-bin
-	@echo "===============RUNNING BENCHMARK TESTS==============="
-	@echo "--- starting testing servers"
+e2e-test-grpc: ensure-testing-deps ensure-testing-bin
+	@echo "===============RUNNING E2E GRPC TESTS==============="
+	@go test ./e2e/e2e_test.go -update -grpc
+
+bench-nats-sv:
 	@PITAYA_METRICS_PROMETHEUS_PORT=9098 ./examples/testing/server -type game -frontend=false > /dev/null 2>&1 & echo $$! > back.PID
 	@PITAYA_METRICS_PROMETHEUS_PORT=9099 ./examples/testing/server -type connector -frontend=true > /dev/null 2>&1 & echo $$! > front.PID
+
+bench-grpc-sv:
+	@PITAYA_METRICS_PROMETHEUS_PORT=9098 ./examples/testing/server -grpc -grpcport=3435 -type game -frontend=false > /dev/null 2>&1 & echo $$! > back.PID
+	@PITAYA_METRICS_PROMETHEUS_PORT=9099 ./examples/testing/server -grpc -grpcport=3436 -type connector -frontend=true > /dev/null 2>&1 & echo $$! > front.PID
+
+benchmark-test-nats: ensure-testing-deps ensure-testing-bin
+	@echo "===============RUNNING BENCHMARK TESTS WITH NATS==============="
+	@echo "--- starting testing servers"
 	@echo "--- sleeping for 5 seconds"
+	@make bench-nats-sv
 	@sleep 5
 	@go test ./benchmark/benchmark_test.go -bench=.
 	@echo "--- killing testing servers"
 	@kill `cat back.PID` && rm back.PID
 	@kill `cat front.PID` && rm front.PID
 
+benchmark-test-grpc: ensure-e2e-deps-grpc ensure-testing-bin
+	@echo "===============RUNNING BENCHMARK TESTS WITH GRPC==============="
+	@echo "--- starting testing servers"
+	@echo "--- sleeping for 5 seconds"
+	@make bench-grpc-sv
+	@sleep 5
+	@go test ./benchmark/benchmark_test.go -bench=.
+	@echo "--- killing testing servers"
+	@kill `cat back.PID` && rm back.PID
+	@kill `cat front.PID` && rm front.PID
 
 unit-test-coverage: kill-testing-deps
 	@echo "===============RUNNING UNIT TESTS==============="

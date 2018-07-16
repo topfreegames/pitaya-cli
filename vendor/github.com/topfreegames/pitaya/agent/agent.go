@@ -22,7 +22,7 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
+	gojson "encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -38,6 +38,8 @@ import (
 	"github.com/topfreegames/pitaya/metrics"
 	"github.com/topfreegames/pitaya/protos"
 	"github.com/topfreegames/pitaya/serialize"
+	"github.com/topfreegames/pitaya/serialize/json"
+	"github.com/topfreegames/pitaya/serialize/protobuf"
 	"github.com/topfreegames/pitaya/session"
 	"github.com/topfreegames/pitaya/tracing"
 	"github.com/topfreegames/pitaya/util"
@@ -99,7 +101,16 @@ func NewAgent(
 ) *Agent {
 	// initialize heartbeat and handshake data on first player connection
 	once.Do(func() {
-		hbdEncode(heartbeatTime, packetEncoder, messageEncoder.IsCompressionEnabled())
+		var serializerName string
+		switch serializer.(type) {
+		case *json.Serializer:
+			serializerName = "json"
+		case *protobuf.Serializer:
+			serializerName = "protobuf"
+		default:
+			serializerName = "unknown"
+		}
+		hbdEncode(heartbeatTime, packetEncoder, messageEncoder.IsCompressionEnabled(), serializerName)
 	})
 
 	a := &Agent{
@@ -264,8 +275,6 @@ func (a *Agent) Handle() {
 	select {
 	case <-a.chDie: // agent closed signal
 		return
-	case <-a.appDieChan: // application quit
-		return
 	}
 }
 
@@ -303,12 +312,12 @@ func onSessionClosed(s *session.Session) {
 		}
 	}()
 
-	if len(s.OnCloseCallbacks) < 1 {
-		return
+	for _, fn1 := range s.OnCloseCallbacks {
+		fn1()
 	}
 
-	for _, fn := range s.OnCloseCallbacks {
-		fn()
+	for _, fn2 := range session.SessionCloseCallbacks {
+		fn2(s)
 	}
 }
 
@@ -407,15 +416,16 @@ func (a *Agent) AnswerWithError(ctx context.Context, mid uint, err error) {
 	}
 }
 
-func hbdEncode(heartbeatTimeout time.Duration, packetEncoder codec.PacketEncoder, dataCompression bool) {
+func hbdEncode(heartbeatTimeout time.Duration, packetEncoder codec.PacketEncoder, dataCompression bool, serializerName string) {
 	hData := map[string]interface{}{
 		"code": 200,
 		"sys": map[string]interface{}{
-			"heartbeat": heartbeatTimeout.Seconds(),
-			"dict":      message.GetDictionary(),
+			"heartbeat":  heartbeatTimeout.Seconds(),
+			"dict":       message.GetDictionary(),
+			"serializer": serializerName,
 		},
 	}
-	data, err := json.Marshal(hData)
+	data, err := gojson.Marshal(hData)
 	if err != nil {
 		panic(err)
 	}

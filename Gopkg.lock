@@ -269,6 +269,7 @@
     "router",
     "serialize",
     "serialize/json",
+    "serialize/protobuf",
     "service",
     "session",
     "timer",
@@ -276,7 +277,7 @@
     "util",
     "util/compression"
   ]
-  revision = "d9f90465845a4c3f0c994020f7216766fa97ec86"
+  revision = "2b1476d8e2cf39ec71749107c196f6061bf709d9"
 
 [[projects]]
   branch = "master"
