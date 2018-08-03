@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/topfreegames/pitaya/config"
 	"github.com/topfreegames/pitaya/constants"
 	pitErrors "github.com/topfreegames/pitaya/errors"
@@ -36,6 +37,7 @@ import (
 	"github.com/topfreegames/pitaya/protos"
 	"github.com/topfreegames/pitaya/route"
 	"github.com/topfreegames/pitaya/session"
+	"github.com/topfreegames/pitaya/tracing"
 	"google.golang.org/grpc"
 )
 
@@ -79,8 +81,20 @@ func (gs *GRPCClient) configure() {
 }
 
 // Call makes a RPC Call
-// TODO: Jaeger
 func (gs *GRPCClient) Call(ctx context.Context, rpcType protos.RPCType, route *route.Route, session *session.Session, msg *message.Message, server *Server) (*protos.Response, error) {
+	parent, err := tracing.ExtractSpan(ctx)
+	if err != nil {
+		logger.Log.Warnf("failed to retrieve parent span: %s", err.Error())
+	}
+	tags := opentracing.Tags{
+		"span.kind":       "client",
+		"local.id":        gs.server.ID,
+		"peer.serverType": server.Type,
+		"peer.id":         server.ID,
+	}
+	ctx = tracing.StartSpan(ctx, "RPC Call", tags, parent)
+	defer tracing.FinishSpan(ctx, err)
+
 	req, err := buildRequest(ctx, rpcType, route, session, msg, gs.server)
 	if err != nil {
 		return nil, err
@@ -114,7 +128,7 @@ func (gs *GRPCClient) Send(uid string, d []byte) error {
 	return constants.ErrNotImplemented
 }
 
-// BroadcastSessionBind sends the binding information to other servers that may br interested in this info
+// BroadcastSessionBind sends the binding information to other servers that may be interested in this info
 func (gs *GRPCClient) BroadcastSessionBind(uid string) error {
 	if gs.bindingStorage == nil {
 		return constants.ErrNoBindingStorageModule

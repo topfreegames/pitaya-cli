@@ -35,7 +35,7 @@ import (
 	"github.com/topfreegames/pitaya/metrics"
 	"github.com/topfreegames/pitaya/protos"
 	"github.com/topfreegames/pitaya/session"
-	"github.com/topfreegames/pitaya/tracing"
+	"github.com/topfreegames/pitaya/util"
 )
 
 // NatsRPCServer struct
@@ -88,11 +88,11 @@ func (ns *NatsRPCServer) configure() error {
 		return constants.ErrNoNatsConnectionString
 	}
 	ns.maxReconnectionRetries = ns.config.GetInt("pitaya.cluster.rpc.server.nats.maxreconnectionretries")
-	ns.messagesBufferSize = ns.config.GetInt("pitaya.buffer.cluster.rpc.server.messages")
+	ns.messagesBufferSize = ns.config.GetInt("pitaya.buffer.cluster.rpc.server.nats.messages")
 	if ns.messagesBufferSize == 0 {
 		return constants.ErrNatsMessagesBufferSizeZero
 	}
-	ns.pushBufferSize = ns.config.GetInt("pitaya.buffer.cluster.rpc.server.push")
+	ns.pushBufferSize = ns.config.GetInt("pitaya.buffer.cluster.rpc.server.nats.push")
 	if ns.pushBufferSize == 0 {
 		return constants.ErrNatsPushBufferSizeZero
 	}
@@ -194,7 +194,8 @@ func (ns *NatsRPCServer) handleMessages() {
 	}
 }
 
-func (ns *NatsRPCServer) getUnhandledRequestsChannel() chan *protos.Request {
+// GetUnhandledRequestsChannel gets the unhandled requests channel from nats rpc server
+func (ns *NatsRPCServer) GetUnhandledRequestsChannel() chan *protos.Request {
 	return ns.unhandledReqCh
 }
 
@@ -221,11 +222,11 @@ func (ns *NatsRPCServer) marshalResponse(res *protos.Response) ([]byte, error) {
 }
 
 func (ns *NatsRPCServer) processMessages(threadID int) {
-	for req := range ns.getUnhandledRequestsChannel() {
+	for req := range ns.GetUnhandledRequestsChannel() {
 		logger.Log.Debugf("(%d) processing message %v", threadID, req.GetMsg().GetId())
 		reply := req.GetMsg().GetReply()
 		var response *protos.Response
-		ctx, err := getContextFromRequest(req, ns.server.ID)
+		ctx, err := util.GetContextFromRequest(req, ns.server.ID)
 		if err != nil {
 			response = &protos.Response{
 				Error: &protos.Error{
@@ -237,7 +238,6 @@ func (ns *NatsRPCServer) processMessages(threadID int) {
 			response, _ = ns.pitayaServer.Call(ctx, req)
 		}
 		p, err := ns.marshalResponse(response)
-		defer tracing.FinishSpan(ctx, err)
 		err = ns.conn.Publish(reply, p)
 		if err != nil {
 			logger.Log.Error("error sending message response")

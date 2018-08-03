@@ -30,6 +30,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/topfreegames/pitaya/constants"
 	"github.com/topfreegames/pitaya/internal/codec"
 	"github.com/topfreegames/pitaya/internal/message"
@@ -38,8 +39,6 @@ import (
 	"github.com/topfreegames/pitaya/metrics"
 	"github.com/topfreegames/pitaya/protos"
 	"github.com/topfreegames/pitaya/serialize"
-	"github.com/topfreegames/pitaya/serialize/json"
-	"github.com/topfreegames/pitaya/serialize/protobuf"
 	"github.com/topfreegames/pitaya/session"
 	"github.com/topfreegames/pitaya/tracing"
 	"github.com/topfreegames/pitaya/util"
@@ -101,16 +100,7 @@ func NewAgent(
 ) *Agent {
 	// initialize heartbeat and handshake data on first player connection
 	once.Do(func() {
-		var serializerName string
-		switch serializer.(type) {
-		case *json.Serializer:
-			serializerName = "json"
-		case *protobuf.Serializer:
-			serializerName = "protobuf"
-		default:
-			serializerName = "unknown"
-		}
-		hbdEncode(heartbeatTime, packetEncoder, messageEncoder.IsCompressionEnabled(), serializerName)
+		hbdEncode(heartbeatTime, packetEncoder, messageEncoder.IsCompressionEnabled(), serializer.GetName())
 	})
 
 	a := &Agent{
@@ -131,7 +121,7 @@ func NewAgent(
 		metricsReporters:   metricsReporters,
 	}
 
-	// bindng session
+	// binding session
 	s := session.New(a, true)
 	metrics.ReportNumberOfConnectedClients(metricsReporters, session.SessionCount)
 	a.Session = s
@@ -167,7 +157,7 @@ func (a *Agent) Push(route string, v interface{}) error {
 }
 
 // ResponseMID implementation for session.NetworkEntity interface
-// Response message to session
+// Respond message to session
 func (a *Agent) ResponseMID(ctx context.Context, mid uint, v interface{}, isError ...bool) error {
 	err := false
 	if len(isError) > 0 {
@@ -388,7 +378,8 @@ func (a *Agent) write() {
 				logger.Log.Error(err.Error())
 				return
 			}
-			tracing.FinishSpan(data.ctx, nil)
+			var e error
+			tracing.FinishSpan(data.ctx, e)
 			if data.typ == message.Response {
 				metrics.ReportTimingFromCtx(data.ctx, a.metricsReporters, handlerType, m.Err)
 			}
@@ -405,6 +396,12 @@ func (a *Agent) SendRequest(ctx context.Context, serverID, route string, v inter
 
 // AnswerWithError answers with an error
 func (a *Agent) AnswerWithError(ctx context.Context, mid uint, err error) {
+	if ctx != nil && err != nil {
+		s := opentracing.SpanFromContext(ctx)
+		if s != nil {
+			tracing.LogError(s, err.Error())
+		}
+	}
 	p, e := util.GetErrorPayload(a.serializer, err)
 	if e != nil {
 		logger.Log.Error("error answering the player with an error: ", e.Error())

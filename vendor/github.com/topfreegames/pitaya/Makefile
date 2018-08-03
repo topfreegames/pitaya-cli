@@ -31,8 +31,11 @@ run-cluster-protobuf-backend-example:
 run-cluster-example-backend:
 	@PITAYA_METRICS_PROMETHEUS_PORT=9091 go run examples/demo/cluster/main.go --port 3251 --type room --frontend=false
 
-run-tadpole-example:
-	@go run examples/demo/tadpole/main.go
+run-cluster-grpc-example-connector:
+	@cd examples/demo/cluster_grpc && go run main.go
+
+run-cluster-grpc-example-room:
+	@cd examples/demo/cluster_grpc && go run main.go --port 3251 --rpcsvport 3435 --type room --frontend=false
 
 protos-compile:
 	@cd benchmark/testdata && ./gen_proto.sh
@@ -121,3 +124,6 @@ test-coverage-func coverage-func: test-coverage merge-profiles
 	@echo "\033[1;34mFunctions NOT COVERED by Tests\033[0m"
 	@echo "\033[1;34m=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-\033[0m"
 	@go tool cover -func=coverage-all.out | egrep -v "100.0[%]"
+
+serializer-mock:
+	@mockgen github.com/topfreegames/pitaya/serialize Serializer | sed 's/mock_serialize/mocks/' > serialize/mocks/serializer.go

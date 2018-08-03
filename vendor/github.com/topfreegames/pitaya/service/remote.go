@@ -106,7 +106,6 @@ func (r *RemoteService) remoteProcess(
 			logger.Log.Error(err)
 			a.AnswerWithError(ctx, msg.ID, err)
 		}
-
 	case message.Notify:
 		defer tracing.FinishSpan(ctx, err)
 		if err == nil && res.Error != nil {
@@ -125,7 +124,24 @@ func (r *RemoteService) AddRemoteBindingListener(bindingListener cluster.RemoteB
 
 // Call processes a remote call
 func (r *RemoteService) Call(ctx context.Context, req *protos.Request) (*protos.Response, error) {
-	res := processRemoteMessage(ctx, req, r)
+	c, err := util.GetContextFromRequest(req, r.server.ID)
+	var res *protos.Response
+	if err != nil {
+		res = &protos.Response{
+			Error: &protos.Error{
+				Code: e.ErrInternalCode,
+				Msg:  err.Error(),
+			},
+		}
+	} else {
+		res = processRemoteMessage(c, req, r)
+	}
+
+	if res.Error != nil {
+		err = errors.New(res.Error.Msg)
+	}
+
+	defer tracing.FinishSpan(c, err)
 	return res, nil
 }
 
