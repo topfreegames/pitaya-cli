@@ -99,6 +99,19 @@ func registerDisconnect(shell *ishell.Shell) {
 	})
 }
 
+func connect(addr string) error {
+	if err := pClient.ConnectToTLS(addr, true); err != nil {
+		if err.Error() == "EOF" {
+			if err := pClient.ConnectTo(addr); err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+	}
+	return nil
+}
+
 func registerConnect(shell *ishell.Shell) {
 	shell.AddCmd(&ishell.Cmd{
 		Name: "connect",
@@ -115,8 +128,8 @@ func registerConnect(shell *ishell.Shell) {
 			} else {
 				addr = c.Args[0]
 			}
-			err := pClient.ConnectTo(addr)
-			if err != nil {
+			if err := connect(addr); err != nil {
+				c.Println("Failed to connect!")
 				c.Err(err)
 			} else {
 				c.Println("connected!")

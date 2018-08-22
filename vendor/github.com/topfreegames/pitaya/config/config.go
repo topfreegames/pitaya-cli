@@ -74,6 +74,10 @@ func (c *Config) fillDefaultValues() {
 		"pitaya.cluster.sd.etcd.endpoints":                      "localhost:2379",
 		"pitaya.cluster.sd.etcd.prefix":                         "pitaya/",
 		"pitaya.cluster.sd.etcd.heartbeat.ttl":                  "60s",
+		"pitaya.cluster.sd.etcd.grantlease.timeout":             "60s",
+		"pitaya.cluster.sd.etcd.grantlease.maxretries":          15,
+		"pitaya.cluster.sd.etcd.grantlease.retryinterval":       "5s",
+		"pitaya.cluster.sd.etcd.revoke.timeout":                 "5s",
 		"pitaya.cluster.sd.etcd.heartbeat.log":                  false,
 		"pitaya.cluster.sd.etcd.syncservers.interval":           "120s",
 		"pitaya.modules.bindingstorage.etcd.endpoints":          "localhost:2379",
@@ -90,6 +94,7 @@ func (c *Config) fillDefaultValues() {
 		"pitaya.metrics.prometheus.port":                        9090,
 		"pitaya.metrics.prometheus.enabled":                     false,
 		"pitaya.metrics.tags":                                   map[string]string{},
+		"pitaya.defaultpipelines.structvalidation.enabled":      false,
 	}
 
 	for param := range defaultsMap {
