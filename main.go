@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	homedir "github.com/mitchellh/go-homedir"
 	"github.com/sirupsen/logrus"
@@ -50,7 +51,7 @@ func registerRequest(shell *ishell.Shell) {
 			route := c.Args[0]
 			var data []byte
 			if len(c.RawArgs) > 2 {
-				data = []byte(c.RawArgs[2])
+				data = []byte(strings.Join(c.RawArgs[2:], ""))
 			}
 			_, err := pClient.SendRequest(route, data)
 			if err != nil {
@@ -76,7 +77,7 @@ func registerNotify(shell *ishell.Shell) {
 			route := c.Args[0]
 			var data []byte
 			if len(c.RawArgs) > 2 {
-				data = []byte(c.RawArgs[2])
+				data = []byte(strings.Join(c.RawArgs[2:], ""))
 			}
 			if err := pClient.SendNotify(route, data); err != nil {
 				c.Println(err)
