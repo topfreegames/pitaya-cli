@@ -33,9 +33,12 @@ import (
 	ishell "gopkg.in/abiosoft/ishell.v2"
 )
 
-var pClient client.PitayaClient
-var disconnectedCh chan bool
-var docsString string
+var (
+	pClient        client.PitayaClient
+	disconnectedCh chan bool
+	docsString     string
+	pushInfo       map[string]string
+)
 
 func registerRequest(shell *ishell.Shell) {
 	shell.AddCmd(&ishell.Cmd{
@@ -142,16 +145,19 @@ func registerConnect(shell *ishell.Shell) {
 			}
 
 			if docsString != "" {
-				cli := client.NewProto(docsString, logrus.InfoLevel)
-				pClient = cli
-				err := cli.LoadServerInfo(addr)
+				protoclient := client.NewProto(docsString, logrus.InfoLevel)
+				pClient = protoclient
+
+				for k, v := range pushInfo {
+					protoclient.AddPushResponse(k, v)
+				}
+
+				err := protoclient.LoadServerInfo(addr)
 				if err != nil {
 					c.Err(err)
 				}
-
 			} else {
-				cli := client.New(logrus.InfoLevel)
-				pClient = cli
+				pClient = client.New(logrus.InfoLevel)
 			}
 
 			if err := connect(addr); err != nil {
@@ -162,6 +168,33 @@ func registerConnect(shell *ishell.Shell) {
 				disconnectedCh = make(chan bool, 1)
 				go readServerMessages(shell)
 			}
+		},
+	})
+}
+
+func registerPush(shell *ishell.Shell) {
+	shell.AddCmd(&ishell.Cmd{
+		Name: "push",
+		Help: "insert information of push return",
+		Func: func(c *ishell.Context) {
+			if pClient != nil {
+				c.Err(errors.New("use this command before connect"))
+				return
+			}
+
+			if len(c.Args) != 2 {
+				c.Err(errors.New(`push should be in the format: push {route} {type}`))
+				return
+			}
+
+			if docsString == "" {
+				c.Println("Only for probuffer servers")
+				return
+			}
+
+			route := c.Args[0]
+			pushtype := c.Args[1]
+			pushInfo[route] = pushtype
 		},
 	})
 }
@@ -202,6 +235,9 @@ func main() {
 	registerDisconnect(shell)
 	registerRequest(shell)
 	registerNotify(shell)
+	registerPush(shell)
+
+	pushInfo = make(map[string]string)
 
 	shell.Run()
 }
