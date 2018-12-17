@@ -25,3 +25,11 @@ Commands:
   notify          makes a notify to pitaya server
   request         makes a request to pitaya server
 ```
+
+For connecting to a protobuffer server specify the documentation route with the -docs argument:
+
+```
+pitaya-cli -docs connector.docsHandler.docs
+```
+
+Protobuffer servers must implement remotes for protobuf descriptors and auto documentation.
