@@ -26,15 +26,16 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	opentracing "github.com/opentracing/opentracing-go"
+	"github.com/topfreegames/pitaya/conn/codec"
+	"github.com/topfreegames/pitaya/conn/message"
+	"github.com/topfreegames/pitaya/conn/packet"
 	"github.com/topfreegames/pitaya/constants"
-	"github.com/topfreegames/pitaya/internal/codec"
-	"github.com/topfreegames/pitaya/internal/message"
-	"github.com/topfreegames/pitaya/internal/packet"
 	"github.com/topfreegames/pitaya/logger"
 	"github.com/topfreegames/pitaya/metrics"
 	"github.com/topfreegames/pitaya/protos"
@@ -266,6 +267,23 @@ func (a *Agent) Handle() {
 	case <-a.chDie: // agent closed signal
 		return
 	}
+}
+
+// IPVersion returns the remote address ip version.
+// net.TCPAddr and net.UDPAddr implementations of String()
+// always construct result as <ip>:<port> on both
+// ipv4 and ipv6. Also, to see if the ip is ipv6 they both
+// check if there is a colon on the string.
+// So checking if there are more than one colon here is safe.
+func (a *Agent) IPVersion() string {
+	version := constants.IPv4
+
+	ipPort := a.RemoteAddr().String()
+	if strings.Count(ipPort, ":") > 1 {
+		version = constants.IPv6
+	}
+
+	return version
 }
 
 func (a *Agent) heartbeat() {

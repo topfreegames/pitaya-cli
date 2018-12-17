@@ -26,6 +26,14 @@
   revision = "3a771d992973f24aa725d07868b467d1ddfceafb"
 
 [[projects]]
+  digest = "1:b520b55fc1146c5b0eea03b07233f7a3d4a9be985c037c91ea6b82ecb81bd521"
+  name = "github.com/bitly/go-simplejson"
+  packages = ["."]
+  pruneopts = "UT"
+  revision = "aabad6e819789e569bd6aabf444c935aa9ba1e44"
+  version = "v0.5.0"
+
+[[projects]]
   branch = "master"
   digest = "1:4c4c33075b704791d6a7f09dfb55c66769e8a1dc6adf87026292d274fe8ad113"
   name = "github.com/codahale/hdrhistogram"
@@ -172,6 +180,17 @@
   version = "v1.4.7"
 
 [[projects]]
+  digest = "1:0594af97b2f4cec6554086eeace6597e20a4b69466eb4ada25adf9f4300dddd2"
+  name = "github.com/garyburd/redigo"
+  packages = [
+    "internal",
+    "redis",
+  ]
+  pruneopts = "UT"
+  revision = "a69d19351219b6dd56f274f96d85a7014a2ec34e"
+  version = "v1.6.0"
+
+[[projects]]
   digest = "1:2cd7915ab26ede7d95b8749e6b1f933f1c6d5398030684e6505940a10f31cfda"
   name = "github.com/ghodss/yaml"
   packages = ["."]
@@ -251,12 +270,12 @@
   revision = "e89373fe6b4a7413d7acd6da1725b83ef713e6e4"
 
 [[projects]]
-  digest = "1:8f8811f9be822914c3a25c6a071e93beb4c805d7b026cbf298bc577bc1cc945b"
+  digest = "1:3a26588bc48b96825977c1b3df964f8fd842cd6860cc26370588d3563433cf11"
   name = "github.com/google/uuid"
   packages = ["."]
   pruneopts = "UT"
-  revision = "064e2069ce9c359c118179501254f67d7d37ba24"
-  version = "0.2"
+  revision = "d460ce9f8df2e77fb1ba55ca87fafed96c607494"
+  version = "v1.0.0"
 
 [[projects]]
   digest = "1:43dd08a10854b2056e615d1b1d22ac94559d822e1f8b6fcc92c1a1057e85188e"
@@ -538,6 +557,22 @@
   revision = "830351dc03c6f07d625727d5f993a463babb20e1"
 
 [[projects]]
+  digest = "1:a35142e7dae983dc77f9822b754f1d9e41bfe9767d11585ab24dcd2ec871be0f"
+  name = "github.com/topfreegames/go-workers"
+  packages = ["."]
+  pruneopts = "UT"
+  revision = "debd68e29f6123083fb906c7a6352c748203538a"
+  version = "v0.0.1"
+
+[[projects]]
+  digest = "1:a157dc7b8f23c258b204ff81469c91136a45fd90284fbb6387fea23bd3e48607"
+  name = "github.com/topfreegames/viaproxy"
+  packages = ["."]
+  pruneopts = "UT"
+  revision = "8724385082be8dce5bbd2c1c00cf80e2a71075bf"
+  version = "v0.1.1"
+
+[[projects]]
   digest = "1:a65ad5ffa268f4591efad04749e128bde6a80cbbc128688b6327fec461a61a38"
   name = "github.com/uber/jaeger-client-go"
   packages = [
@@ -727,6 +762,7 @@
     "github.com/coreos/etcd/integration",
     "github.com/gogo/protobuf/proto",
     "github.com/golang/mock/gomock",
+    "github.com/golang/protobuf/proto",
     "github.com/google/uuid",
     "github.com/gorilla/websocket",
     "github.com/nats-io/gnatsd/server",
@@ -739,6 +775,8 @@
     "github.com/spf13/viper",
     "github.com/stretchr/testify/assert",
     "github.com/stretchr/testify/require",
+    "github.com/topfreegames/go-workers",
+    "github.com/topfreegames/viaproxy",
     "github.com/uber/jaeger-client-go",
     "github.com/uber/jaeger-client-go/config",
     "golang.org/x/net/context",

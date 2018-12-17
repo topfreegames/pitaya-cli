@@ -22,6 +22,7 @@ package main
 
 import (
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"strings"
@@ -32,15 +33,23 @@ import (
 	ishell "gopkg.in/abiosoft/ishell.v2"
 )
 
-var pClient = client.New(logrus.InfoLevel)
-var disconnectedCh chan bool
+var (
+	pClient        client.PitayaClient
+	disconnectedCh chan bool
+	docsString     string
+	pushInfo       map[string]string
+)
 
 func registerRequest(shell *ishell.Shell) {
 	shell.AddCmd(&ishell.Cmd{
 		Name: "request",
 		Help: "makes a request to pitaya server",
 		Func: func(c *ishell.Context) {
-			if !pClient.Connected {
+			if pClient == nil {
+				c.Err(errors.New("not connected"))
+				return
+			}
+			if !pClient.ConnectedStatus() {
 				c.Err(errors.New("not connected"))
 				return
 			}
@@ -66,7 +75,11 @@ func registerNotify(shell *ishell.Shell) {
 		Name: "notify",
 		Help: "makes a notify to pitaya server",
 		Func: func(c *ishell.Context) {
-			if !pClient.Connected {
+			if pClient == nil {
+				c.Err(errors.New("not connected"))
+				return
+			}
+			if !pClient.ConnectedStatus() {
 				c.Err(errors.New("not connected"))
 				return
 			}
@@ -92,7 +105,7 @@ func registerDisconnect(shell *ishell.Shell) {
 		Name: "disconnect",
 		Help: "disconnects from pitaya server",
 		Func: func(c *ishell.Context) {
-			if pClient.Connected {
+			if pClient.ConnectedStatus() {
 				disconnectedCh <- true
 				pClient.Disconnect()
 			}
@@ -110,6 +123,7 @@ func connect(addr string) error {
 			return err
 		}
 	}
+
 	return nil
 }
 
@@ -118,7 +132,7 @@ func registerConnect(shell *ishell.Shell) {
 		Name: "connect",
 		Help: "connects to pitaya",
 		Func: func(c *ishell.Context) {
-			if pClient.Connected {
+			if pClient != nil && pClient.ConnectedStatus() {
 				c.Err(errors.New("already connected"))
 				return
 			}
@@ -129,6 +143,23 @@ func registerConnect(shell *ishell.Shell) {
 			} else {
 				addr = c.Args[0]
 			}
+
+			if docsString != "" {
+				protoclient := client.NewProto(docsString, logrus.InfoLevel)
+				pClient = protoclient
+
+				for k, v := range pushInfo {
+					protoclient.AddPushResponse(k, v)
+				}
+
+				err := protoclient.LoadServerInfo(addr)
+				if err != nil {
+					c.Err(err)
+				}
+			} else {
+				pClient = client.New(logrus.InfoLevel)
+			}
+
 			if err := connect(addr); err != nil {
 				c.Println("Failed to connect!")
 				c.Err(err)
@@ -141,13 +172,41 @@ func registerConnect(shell *ishell.Shell) {
 	})
 }
 
+func registerPush(shell *ishell.Shell) {
+	shell.AddCmd(&ishell.Cmd{
+		Name: "push",
+		Help: "insert information of push return",
+		Func: func(c *ishell.Context) {
+			if pClient != nil {
+				c.Err(errors.New("use this command before connect"))
+				return
+			}
+
+			if len(c.Args) != 2 {
+				c.Err(errors.New(`push should be in the format: push {route} {type}`))
+				return
+			}
+
+			if docsString == "" {
+				c.Println("Only for probuffer servers")
+				return
+			}
+
+			route := c.Args[0]
+			pushtype := c.Args[1]
+			pushInfo[route] = pushtype
+		},
+	})
+}
+
 func readServerMessages(c *ishell.Shell) {
+	channel := pClient.MsgChannel()
 	for {
 		select {
 		case <-disconnectedCh:
 			close(disconnectedCh)
 			return
-		case m := <-pClient.IncomingMsgChan:
+		case m := <-channel:
 			c.Printf("sv-> %s\n", string(m.Data))
 		}
 	}
@@ -167,12 +226,18 @@ func main() {
 	shell := ishell.New()
 	configure(shell)
 
+	flag.StringVar(&docsString, "docs", "", "documentation route")
+	flag.Parse()
+
 	shell.Println("Pitaya REPL Client")
 
 	registerConnect(shell)
 	registerDisconnect(shell)
 	registerRequest(shell)
 	registerNotify(shell)
+	registerPush(shell)
+
+	pushInfo = make(map[string]string)
 
 	shell.Run()
 }

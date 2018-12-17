@@ -25,3 +25,23 @@ Commands:
   notify          makes a notify to pitaya server
   request         makes a request to pitaya server
 ```
+
+For connecting to a protobuffer server specify the documentation route with the -docs argument:
+
+```
+pitaya-cli -docs connector.docsHandler.docs
+```
+
+Protobuffer servers must implement handlers for protobuf descriptors and auto documentation.
+
+A full example of running pitaya-cli with protobuffers:
+
+```
+pitaya-cli -docs connector.docsHandler.docs
+>>> push connector.playerHandler.matchfound protos.FindMatchPush
+>>> connect localhost:30124
+>>> request connector.playerHandler.create
+>>> request connector.playerHandler.findmatch {"RoomType":"xxxx"}
+```
+
+This example can be run with the pitaya-bot protobuffer testing example.
