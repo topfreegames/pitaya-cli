@@ -31,11 +31,11 @@ import (
 	"github.com/topfreegames/pitaya/agent"
 	"github.com/topfreegames/pitaya/cluster"
 	"github.com/topfreegames/pitaya/component"
+	"github.com/topfreegames/pitaya/conn/codec"
+	"github.com/topfreegames/pitaya/conn/message"
 	"github.com/topfreegames/pitaya/constants"
 	"github.com/topfreegames/pitaya/docgenerator"
 	e "github.com/topfreegames/pitaya/errors"
-	"github.com/topfreegames/pitaya/internal/codec"
-	"github.com/topfreegames/pitaya/internal/message"
 	"github.com/topfreegames/pitaya/logger"
 	"github.com/topfreegames/pitaya/protos"
 	"github.com/topfreegames/pitaya/route"
@@ -426,7 +426,7 @@ func (r *RemoteService) remoteCall(
 	target := server
 
 	if target == nil {
-		target, err = r.router.Route(rpcType, svType, session, route, msg)
+		target, err = r.router.Route(ctx, rpcType, svType, route, msg)
 		if err != nil {
 			return nil, e.NewError(err, e.ErrInternalCode)
 		}
@@ -447,9 +447,9 @@ func (r *RemoteService) DumpServices() {
 }
 
 // Docs returns documentation for remotes
-func (r *RemoteService) Docs() (map[string]interface{}, error) {
+func (r *RemoteService) Docs(getPtrNames bool) (map[string]interface{}, error) {
 	if r == nil {
 		return map[string]interface{}{}, nil
 	}
-	return docgenerator.RemotesDocs(r.server.Type, r.services)
+	return docgenerator.RemotesDocs(r.server.Type, r.services, getPtrNames)
 }

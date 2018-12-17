@@ -22,6 +22,7 @@ package main
 
 import (
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"strings"
@@ -32,15 +33,20 @@ import (
 	ishell "gopkg.in/abiosoft/ishell.v2"
 )
 
-var pClient = client.New(logrus.InfoLevel)
+var pClient client.PitayaClient
 var disconnectedCh chan bool
+var docsString string
 
 func registerRequest(shell *ishell.Shell) {
 	shell.AddCmd(&ishell.Cmd{
 		Name: "request",
 		Help: "makes a request to pitaya server",
 		Func: func(c *ishell.Context) {
-			if !pClient.Connected {
+			if pClient == nil {
+				c.Err(errors.New("not connected"))
+				return
+			}
+			if !pClient.ConnectedStatus() {
 				c.Err(errors.New("not connected"))
 				return
 			}
@@ -66,7 +72,11 @@ func registerNotify(shell *ishell.Shell) {
 		Name: "notify",
 		Help: "makes a notify to pitaya server",
 		Func: func(c *ishell.Context) {
-			if !pClient.Connected {
+			if pClient == nil {
+				c.Err(errors.New("not connected"))
+				return
+			}
+			if !pClient.ConnectedStatus() {
 				c.Err(errors.New("not connected"))
 				return
 			}
@@ -92,7 +102,7 @@ func registerDisconnect(shell *ishell.Shell) {
 		Name: "disconnect",
 		Help: "disconnects from pitaya server",
 		Func: func(c *ishell.Context) {
-			if pClient.Connected {
+			if pClient.ConnectedStatus() {
 				disconnectedCh <- true
 				pClient.Disconnect()
 			}
@@ -110,6 +120,7 @@ func connect(addr string) error {
 			return err
 		}
 	}
+
 	return nil
 }
 
@@ -118,7 +129,7 @@ func registerConnect(shell *ishell.Shell) {
 		Name: "connect",
 		Help: "connects to pitaya",
 		Func: func(c *ishell.Context) {
-			if pClient.Connected {
+			if pClient != nil && pClient.ConnectedStatus() {
 				c.Err(errors.New("already connected"))
 				return
 			}
@@ -129,6 +140,20 @@ func registerConnect(shell *ishell.Shell) {
 			} else {
 				addr = c.Args[0]
 			}
+
+			if docsString != "" {
+				cli := client.NewProto(docsString, logrus.InfoLevel)
+				pClient = cli
+				err := cli.LoadServerInfo(addr)
+				if err != nil {
+					c.Err(err)
+				}
+
+			} else {
+				cli := client.New(logrus.InfoLevel)
+				pClient = cli
+			}
+
 			if err := connect(addr); err != nil {
 				c.Println("Failed to connect!")
 				c.Err(err)
@@ -142,12 +167,13 @@ func registerConnect(shell *ishell.Shell) {
 }
 
 func readServerMessages(c *ishell.Shell) {
+	channel := pClient.MsgChannel()
 	for {
 		select {
 		case <-disconnectedCh:
 			close(disconnectedCh)
 			return
-		case m := <-pClient.IncomingMsgChan:
+		case m := <-channel:
 			c.Printf("sv-> %s\n", string(m.Data))
 		}
 	}
@@ -166,6 +192,9 @@ func configure(c *ishell.Shell) {
 func main() {
 	shell := ishell.New()
 	configure(shell)
+
+	flag.StringVar(&docsString, "docs", "", "documentation route")
+	flag.Parse()
 
 	shell.Println("Pitaya REPL Client")
 

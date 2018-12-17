@@ -32,13 +32,13 @@ import (
 	"github.com/topfreegames/pitaya/agent"
 	"github.com/topfreegames/pitaya/cluster"
 	"github.com/topfreegames/pitaya/component"
+	"github.com/topfreegames/pitaya/conn/codec"
+	"github.com/topfreegames/pitaya/conn/message"
+	"github.com/topfreegames/pitaya/conn/packet"
 	"github.com/topfreegames/pitaya/constants"
 	pcontext "github.com/topfreegames/pitaya/context"
 	"github.com/topfreegames/pitaya/docgenerator"
 	e "github.com/topfreegames/pitaya/errors"
-	"github.com/topfreegames/pitaya/internal/codec"
-	"github.com/topfreegames/pitaya/internal/message"
-	"github.com/topfreegames/pitaya/internal/packet"
 	"github.com/topfreegames/pitaya/logger"
 	"github.com/topfreegames/pitaya/metrics"
 	"github.com/topfreegames/pitaya/route"
@@ -49,7 +49,8 @@ import (
 )
 
 var (
-	handlers = make(map[string]*component.Handler) // all handler method
+	handlers    = make(map[string]*component.Handler) // all handler method
+	handlerType = "handler"
 )
 
 type (
@@ -185,6 +186,8 @@ func (h *HandlerService) Handle(conn net.Conn) {
 			return
 		}
 
+		logger.Log.Debug("Received data on connection")
+
 		// (warning): decoder uses slice for performance, packet data should be copied before next Decode
 		packets, err := h.decoder.Decode(buf[:n])
 		if err != nil {
@@ -210,7 +213,9 @@ func (h *HandlerService) Handle(conn net.Conn) {
 func (h *HandlerService) processPacket(a *agent.Agent, p *packet.Packet) error {
 	switch p.Type {
 	case packet.Handshake:
+		logger.Log.Debug("Received handshake packet")
 		if err := a.SendHandshakeResponse(); err != nil {
+			logger.Log.Errorf("Error sending handshake response: %s", err.Error())
 			return err
 		}
 		logger.Log.Debugf("Session handshake Id=%d, Remote=%s", a.Session.ID(), a.RemoteAddr())
@@ -218,7 +223,6 @@ func (h *HandlerService) processPacket(a *agent.Agent, p *packet.Packet) error {
 		// Parse the json sent with the handshake by the client
 		handshakeData := &session.HandshakeData{}
 		err := json.Unmarshal(p.Data, handshakeData)
-
 		if err != nil {
 			a.SetStatus(constants.StatusClosed)
 			return fmt.Errorf("Invalid handshake data. Id=%d", a.Session.ID())
@@ -226,6 +230,12 @@ func (h *HandlerService) processPacket(a *agent.Agent, p *packet.Packet) error {
 
 		a.Session.SetHandshakeData(handshakeData)
 		a.SetStatus(constants.StatusHandshake)
+		err = a.Session.Set(constants.IPVersionKey, a.IPVersion())
+		if err != nil {
+			logger.Log.Warnf("failed to save ip version on session: %q\n", err)
+		}
+
+		logger.Log.Debug("Successfully saved handshake data")
 
 	case packet.HandshakeAck:
 		a.SetStatus(constants.StatusWorking)
@@ -260,6 +270,7 @@ func (h *HandlerService) processMessage(a *agent.Agent, msg *message.Message) {
 		"msg.type":  strings.ToLower(msg.Type.String()),
 	}
 	ctx = tracing.StartSpan(ctx, msg.Route, tags)
+	ctx = context.WithValue(ctx, constants.SessionCtxKey, a.Session)
 
 	r, err := route.Decode(msg.Route)
 	if err != nil {
@@ -307,6 +318,7 @@ func (h *HandlerService) localProcess(ctx context.Context, a *agent.Agent, route
 			a.Session.ResponseMID(ctx, mid, ret)
 		}
 	} else {
+		metrics.ReportTimingFromCtx(ctx, h.metricsReporters, handlerType, false)
 		tracing.FinishSpan(ctx, err)
 	}
 }
@@ -319,9 +331,9 @@ func (h *HandlerService) DumpServices() {
 }
 
 // Docs returns documentation for handlers
-func (h *HandlerService) Docs() (map[string]interface{}, error) {
+func (h *HandlerService) Docs(getPtrNames bool) (map[string]interface{}, error) {
 	if h == nil {
 		return map[string]interface{}{}, nil
 	}
-	return docgenerator.HandlersDocs(h.server.Type, h.services)
+	return docgenerator.HandlersDocs(h.server.Type, h.services, getPtrNames)
 }

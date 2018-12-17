@@ -17,7 +17,7 @@ setup-protobuf-macos:
 	@go get -u github.com/gogo/protobuf/protoc-gen-gogofaster
 
 run-chat-example:
-	@cd examples/demo/chat/ && go run main.go
+	@cd examples/testing && docker-compose up -d etcd nats && cd ../demo/chat/ && go run main.go
 
 run-cluster-example-frontend:
 	@PITAYA_METRICS_PROMETHEUS_PORT=9090 go run examples/demo/cluster/main.go
@@ -36,6 +36,18 @@ run-cluster-grpc-example-connector:
 
 run-cluster-grpc-example-room:
 	@cd examples/demo/cluster_grpc && go run main.go --port 3251 --rpcsvport 3435 --type room --frontend=false
+
+run-cluster-worker-example-room:
+	@cd examples/demo/worker && go run main.go --type room --frontend=true
+
+run-cluster-worker-example-metagame:
+	@cd examples/demo/worker && go run main.go --type metagame --frontend=false
+
+run-cluster-worker-example-worker:
+	@cd examples/demo/worker && go run main.go --type worker --frontend=false
+
+run-custom-metrics-example:
+	@cd examples/demo/custom_metrics && go run main.go --port 3250
 
 protos-compile:
 	@cd benchmark/testdata && ./gen_proto.sh

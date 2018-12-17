@@ -22,6 +22,7 @@ package metrics
 
 import (
 	"context"
+	"runtime"
 	"time"
 
 	"github.com/topfreegames/pitaya/constants"
@@ -38,11 +39,11 @@ func ReportTimingFromCtx(ctx context.Context, reporters []Reporter, typ string, 
 		startTime := pcontext.GetFromPropagateCtx(ctx, constants.StartTimeKey)
 		route := pcontext.GetFromPropagateCtx(ctx, constants.RouteKey)
 		elapsed := time.Since(time.Unix(0, startTime.(int64)))
-		tags := map[string]string{
+		tags := getTags(ctx, map[string]string{
 			"route":  route.(string),
 			"status": status,
 			"type":   typ,
-		}
+		})
 		for _, r := range reporters {
 			r.ReportSummary(ResponseTime, tags, float64(elapsed.Nanoseconds()))
 		}
@@ -55,10 +56,10 @@ func ReportMessageProcessDelayFromCtx(ctx context.Context, reporters []Reporter,
 		startTime := pcontext.GetFromPropagateCtx(ctx, constants.StartTimeKey)
 		elapsed := time.Since(time.Unix(0, startTime.(int64)))
 		route := pcontext.GetFromPropagateCtx(ctx, constants.RouteKey)
-		tags := map[string]string{
+		tags := getTags(ctx, map[string]string{
 			"route": route.(string),
 			"type":  typ,
-		}
+		})
 		for _, r := range reporters {
 			r.ReportSummary(ProcessDelay, tags, float64(elapsed.Nanoseconds()))
 		}
@@ -70,4 +71,43 @@ func ReportNumberOfConnectedClients(reporters []Reporter, number int64) {
 	for _, r := range reporters {
 		r.ReportGauge(ConnectedClients, map[string]string{}, float64(number))
 	}
+}
+
+// ReportSysMetrics reports sys metrics
+func ReportSysMetrics(reporters []Reporter, period time.Duration) {
+	for {
+		for _, r := range reporters {
+			num := runtime.NumGoroutine()
+			m := &runtime.MemStats{}
+			runtime.ReadMemStats(m)
+
+			r.ReportGauge(Goroutines, map[string]string{}, float64(num))
+			r.ReportGauge(HeapSize, map[string]string{}, float64(m.Alloc))
+			r.ReportGauge(HeapObjects, map[string]string{}, float64(m.HeapObjects))
+		}
+
+		time.Sleep(period)
+	}
+}
+
+func tagsFromContext(ctx context.Context) map[string]string {
+	val := pcontext.GetFromPropagateCtx(ctx, constants.MetricTagsKey)
+	if val == nil {
+		return map[string]string{}
+	}
+
+	tags, ok := val.(map[string]string)
+	if !ok {
+		return map[string]string{}
+	}
+
+	return tags
+}
+
+func getTags(ctx context.Context, tags map[string]string) map[string]string {
+	for k, v := range tagsFromContext(ctx) {
+		tags[k] = v
+	}
+
+	return tags
 }

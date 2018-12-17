@@ -37,12 +37,13 @@ import (
 	"github.com/topfreegames/pitaya/cluster"
 	"github.com/topfreegames/pitaya/component"
 	"github.com/topfreegames/pitaya/config"
+	"github.com/topfreegames/pitaya/conn/codec"
+	"github.com/topfreegames/pitaya/conn/message"
 	"github.com/topfreegames/pitaya/constants"
 	pcontext "github.com/topfreegames/pitaya/context"
 	"github.com/topfreegames/pitaya/defaultpipelines"
+	"github.com/topfreegames/pitaya/docgenerator"
 	"github.com/topfreegames/pitaya/errors"
-	"github.com/topfreegames/pitaya/internal/codec"
-	"github.com/topfreegames/pitaya/internal/message"
 	"github.com/topfreegames/pitaya/logger"
 	"github.com/topfreegames/pitaya/metrics"
 	mods "github.com/topfreegames/pitaya/modules"
@@ -54,6 +55,7 @@ import (
 	"github.com/topfreegames/pitaya/session"
 	"github.com/topfreegames/pitaya/timer"
 	"github.com/topfreegames/pitaya/tracing"
+	"github.com/topfreegames/pitaya/worker"
 )
 
 // ServerMode represents a server mode
@@ -89,16 +91,12 @@ type App struct {
 	serverMode       ServerMode
 	serviceDiscovery cluster.ServiceDiscovery
 	startAt          time.Time
+	worker           *worker.Worker
 }
 
 var (
 	app = &App{
-		server: &cluster.Server{
-			ID:       uuid.New().String(),
-			Type:     "game",
-			Metadata: map[string]string{},
-			Frontend: true,
-		},
+		server:           cluster.NewServer(uuid.New().String(), "game", true, map[string]string{}),
 		debug:            false,
 		startAt:          time.Now(),
 		dieChan:          make(chan bool),
@@ -144,18 +142,31 @@ func Configure(
 
 func configureMetrics(serverType string) {
 	app.metricsReporters = make([]metrics.Reporter, 0)
+	constTags := app.config.GetStringMapString("pitaya.metrics.constTags")
 
-	defaultTags := app.config.GetStringMapString("pitaya.metrics.tags")
 	if app.config.GetBool("pitaya.metrics.prometheus.enabled") {
-		logger.Log.Infof("prometheus is enabled, configuring the metrics reporter on port %d", app.config.GetInt("pitaya.metrics.prometheus.port"))
-		AddMetricsReporter(metrics.GetPrometheusReporter(serverType, app.config.GetString("pitaya.game"), app.config.GetInt("pitaya.metrics.prometheus.port"), defaultTags))
+		port := app.config.GetInt("pitaya.metrics.prometheus.port")
+		logger.Log.Infof("prometheus is enabled, configuring reporter on port %d", port)
+		prometheus, err := metrics.GetPrometheusReporter(serverType, app.config, constTags)
+		if err != nil {
+			logger.Log.Errorf("failed to start prometheus metrics reporter, skipping %v", err)
+		} else {
+			AddMetricsReporter(prometheus)
+		}
 	} else {
-		logger.Log.Info("prometheus is disabled, the metrics reporter will not be enabled")
+		logger.Log.Info("prometheus is disabled, reporter will not be enabled")
 	}
 
 	if app.config.GetBool("pitaya.metrics.statsd.enabled") {
-		logger.Log.Infof("statsd is enabled, configuring the metrics reporter with host: %s", app.config.Get("pitaya.metrics.statsd.host"))
-		metricsReporter, err := metrics.NewStatsdReporter(app.config, serverType, defaultTags)
+		logger.Log.Infof(
+			"statsd is enabled, configuring the metrics reporter with host: %s",
+			app.config.Get("pitaya.metrics.statsd.host"),
+		)
+		metricsReporter, err := metrics.NewStatsdReporter(
+			app.config,
+			serverType,
+			constTags,
+		)
 		if err != nil {
 			logger.Log.Errorf("failed to start statds metrics reporter, skipping %v", err)
 		} else {
@@ -315,6 +326,15 @@ func initSysRemotes() {
 	)
 }
 
+func periodicMetrics() {
+	period := app.config.GetDuration("pitaya.metrics.periodicMetrics.period")
+	go metrics.ReportSysMetrics(app.metricsReporters, period)
+
+	if app.worker.Started() {
+		go worker.Report(app.metricsReporters, period)
+	}
+}
+
 // Start starts the app
 func Start() {
 	if !app.configured {
@@ -396,6 +416,8 @@ func Start() {
 		app.metricsReporters,
 	)
 
+	periodicMetrics()
+
 	listen()
 
 	defer func() {
@@ -411,7 +433,7 @@ func Start() {
 	case <-app.dieChan:
 		logger.Log.Warn("the app will shutdown in a few seconds")
 	case s := <-sg:
-		logger.Log.Warn("got signal", s, "shutting down...")
+		logger.Log.Warn("got signal: ", s, ", shutting down...")
 		close(app.dieChan)
 	}
 
@@ -507,6 +529,16 @@ func GetDefaultLoggerFromCtx(ctx context.Context) logger.Logger {
 	return ctx.Value(constants.LoggerCtxKey).(logger.Logger)
 }
 
+// AddMetricTagsToPropagateCtx adds a key and metric tags that will
+// be propagated through RPC calls. Use the same tags that are at
+// 'pitaya.metrics.additionalTags' config
+func AddMetricTagsToPropagateCtx(
+	ctx context.Context,
+	tags map[string]string,
+) context.Context {
+	return pcontext.AddToPropagateCtx(ctx, constants.MetricTagsKey, tags)
+}
+
 // AddToPropagateCtx adds a key and value that will be propagated through RPC calls
 func AddToPropagateCtx(ctx context.Context, key string, val interface{}) context.Context {
 	return pcontext.AddToPropagateCtx(ctx, key, val)
@@ -524,12 +556,12 @@ func ExtractSpan(ctx context.Context) (opentracing.SpanContext, error) {
 }
 
 // Documentation returns handler and remotes documentacion
-func Documentation() (map[string]interface{}, error) {
-	handlerDocs, err := handlerService.Docs()
+func Documentation(getPtrNames bool) (map[string]interface{}, error) {
+	handlerDocs, err := handlerService.Docs(getPtrNames)
 	if err != nil {
 		return nil, err
 	}
-	remoteDocs, err := remoteService.Docs()
+	remoteDocs, err := remoteService.Docs(getPtrNames)
 	if err != nil {
 		return nil, err
 	}
@@ -537,4 +569,41 @@ func Documentation() (map[string]interface{}, error) {
 		"handlers": handlerDocs,
 		"remotes":  remoteDocs,
 	}, nil
+}
+
+// AddGRPCInfoToMetadata adds host, external host and
+// port into metadata
+func AddGRPCInfoToMetadata(
+	metadata map[string]string,
+	region, host, externalHost, port string,
+) map[string]string {
+	metadata[constants.GRPCHostKey] = host
+	metadata[constants.GRPCExternalHostKey] = externalHost
+	metadata[constants.GRPCPortKey] = port
+	metadata[constants.RegionKey] = region
+	return metadata
+}
+
+// Descriptor returns the protobuf message descriptor for a given message name
+func Descriptor(protoName string) ([]byte, error) {
+	return docgenerator.ProtoDescriptors(protoName)
+}
+
+// StartWorker configures, starts and returns pitaya worker
+func StartWorker(config *config.Config) error {
+	var err error
+	app.worker, err = worker.NewWorker(config)
+	if err != nil {
+		return err
+	}
+
+	app.worker.Start()
+
+	return nil
+}
+
+// RegisterRPCJob registers rpc job to execute jobs with retries
+func RegisterRPCJob(rpcJob worker.RPCJob) error {
+	err := app.worker.RegisterRPCJob(rpcJob)
+	return err
 }

@@ -18,11 +18,18 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-package codec
+package client
 
-import "github.com/topfreegames/pitaya/internal/packet"
+import (
+	"github.com/topfreegames/pitaya/conn/message"
+)
 
-// PacketDecoder interface
-type PacketDecoder interface {
-	Decode(data []byte) ([]*packet.Packet, error)
+type PitayaClient interface {
+	ConnectTo(addr string) error
+	ConnectToTLS(addr string, skipVerify bool) error
+	Disconnect()
+	SendNotify(route string, data []byte) error
+	SendRequest(route string, data []byte) (uint, error)
+	ConnectedStatus() bool
+	MsgChannel() chan *message.Message
 }

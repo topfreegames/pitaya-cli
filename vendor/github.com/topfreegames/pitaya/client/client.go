@@ -32,9 +32,9 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/topfreegames/pitaya"
-	"github.com/topfreegames/pitaya/internal/codec"
-	"github.com/topfreegames/pitaya/internal/message"
-	"github.com/topfreegames/pitaya/internal/packet"
+	"github.com/topfreegames/pitaya/conn/codec"
+	"github.com/topfreegames/pitaya/conn/message"
+	"github.com/topfreegames/pitaya/conn/packet"
 	"github.com/topfreegames/pitaya/logger"
 	"github.com/topfreegames/pitaya/util/compression"
 )
@@ -88,6 +88,16 @@ type Client struct {
 	closeChan       chan struct{}
 	nextID          uint32
 	messageEncoder  message.Encoder
+}
+
+// MsgChannel return the incoming message channel
+func (c *Client) MsgChannel() chan *message.Message {
+	return c.IncomingMsgChan
+}
+
+// ConnectedStatus return the connection status
+func (c *Client) ConnectedStatus() bool {
+	return c.Connected
 }
 
 // New returns a new client
@@ -288,7 +298,7 @@ func (c *Client) sendHeartbeats(interval int) {
 			p, _ := c.packetEncoder.Encode(packet.Heartbeat, []byte{})
 			_, err := c.conn.Write(p)
 			if err != nil {
-				logger.Log.Errorf("error sending heartbeat to sv: %s", err.Error())
+				logger.Log.Errorf("error sending heartbeat to server: %s", err.Error())
 				return
 			}
 		case <-c.closeChan:

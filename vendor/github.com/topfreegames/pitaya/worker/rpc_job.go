@@ -18,11 +18,33 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-package codec
+package worker
 
-import "github.com/topfreegames/pitaya/internal/packet"
+import (
+	"context"
 
-// PacketEncoder interface
-type PacketEncoder interface {
-	Encode(typ packet.Type, data []byte) ([]byte, error)
+	"github.com/gogo/protobuf/proto"
+)
+
+// RPCJob has infos to execute a rpc on worker
+type RPCJob interface {
+	// ServerDiscovery returns a serverID based on the route
+	// and any metadata that is necessary to decide
+	ServerDiscovery(
+		route string,
+		rpcMetadata map[string]interface{},
+	) (serverID string, err error)
+
+	// RPC executes the RPC
+	// It is expected that if serverID is "" the RPC
+	// happens to any destiny server
+	RPC(
+		ctx context.Context,
+		serverID, routeStr string,
+		reply, arg proto.Message,
+	) error
+
+	// GetArgReply returns the arg and reply of the
+	// method
+	GetArgReply(route string) (arg, reply proto.Message, err error)
 }
