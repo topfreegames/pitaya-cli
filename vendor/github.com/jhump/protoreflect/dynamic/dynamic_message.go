@@ -814,8 +814,17 @@ func (m *Message) TryClearFieldByNumber(tagNumber int) error {
 }
 
 func (m *Message) clearField(fd *desc.FieldDescriptor) {
+	// clear value
 	if m.values != nil {
 		delete(m.values, fd.GetNumber())
+	}
+	// also clear any unknown fields
+	if m.unknownFields != nil {
+		delete(m.unknownFields, fd.GetNumber())
+	}
+	// and add this field if it was previously unknown
+	if existing := m.FindFieldDescriptor(fd.GetNumber()); existing == nil {
+		m.addField(fd)
 	}
 }
 
@@ -1576,7 +1585,7 @@ func (m *Message) addRepeatedField(fd *desc.FieldDescriptor, val interface{}) er
 		// We're lenient. Just as we allow setting a map field to a slice of entry messages, we also allow
 		// adding entries one at a time (as if the field were a normal repeated field).
 		msg := val.(proto.Message)
-		dm, err := asDynamicMessage(msg, fd.GetMessageType())
+		dm, err := asDynamicMessage(msg, fd.GetMessageType(), m.mf)
 		if err != nil {
 			return err
 		}
@@ -1830,7 +1839,7 @@ func validFieldValueForRv(fd *desc.FieldDescriptor, val reflect.Value) (interfac
 					return nil, err
 				}
 				msg := e.(proto.Message)
-				dm, err := asDynamicMessage(msg, fd.GetMessageType())
+				dm, err := asDynamicMessage(msg, fd.GetMessageType(), nil)
 				if err != nil {
 					return nil, err
 				}
@@ -1868,11 +1877,11 @@ func validFieldValueForRv(fd *desc.FieldDescriptor, val reflect.Value) (interfac
 	return validElementFieldValueForRv(fd, val)
 }
 
-func asDynamicMessage(m proto.Message, md *desc.MessageDescriptor) (*Message, error) {
+func asDynamicMessage(m proto.Message, md *desc.MessageDescriptor, mf *MessageFactory) (*Message, error) {
 	if dm, ok := m.(*Message); ok {
 		return dm, nil
 	}
-	dm := NewMessage(md)
+	dm := NewMessageWithMessageFactory(md, mf)
 	if err := dm.mergeFrom(m); err != nil {
 		return nil, err
 	}
@@ -2498,14 +2507,17 @@ func (m *Message) mergeFrom(pm proto.Message) error {
 
 	// extension fields
 	rexts, _ := proto.ExtensionDescs(pm)
-	hasUnknownExtensions := false
+	var unknownExtensions []byte
 	for _, ed := range rexts {
-		if ed.Name == "" {
-			hasUnknownExtensions = true
-			continue
-		}
 		v, _ := proto.GetExtension(pm, ed)
 		if v == nil {
+			continue
+		}
+		if ed.ExtensionType == nil {
+			extBytes, _ := v.([]byte)
+			if len(extBytes) > 0 {
+				unknownExtensions = append(unknownExtensions, extBytes...)
+			}
 			continue
 		}
 		fd := m.er.FindExtension(m.md.GetFullyQualifiedName(), ed.Field)
@@ -2536,43 +2548,9 @@ func (m *Message) mergeFrom(pm proto.Message) error {
 	// lastly, also extract any unknown extensions the message may have (unknown extensions
 	// are stored with other extensions, not in the XXX_unrecognized field, so we have to do
 	// more than just the step above...)
-	if hasUnknownExtensions {
-		// TODO: this is very inefficient. this could be much cleaner if the proto library
-		// provided access to unknown extensions (https://github.com/golang/protobuf/issues/385)
-
-		// We are going to make a copy of the message and then clear out all known fields.
-		// When done, we can marshal the copy to bytes, and it will only have unrecognized
-		// extensions. We then unmarshal that into the dynamic message.
-		clone := proto.Clone(pm)
-		cloneRv := reflect.ValueOf(clone).Elem()
-		for _, prop := range props.Prop {
-			if prop.Tag == 0 {
-				continue // one-of or special field (handled below)
-			}
-			// clear out the field
-			rv := cloneRv.FieldByName(prop.Name)
-			rv.Set(reflect.Zero(rv.Type()))
-		}
-		for _, oop := range props.OneofTypes {
-			// clear out the one-of field
-			oov := cloneRv.Field(oop.Field)
-			oov.Set(reflect.Zero(oov.Type()))
-		}
-		for _, ed := range rexts {
-			if ed.Name == "" {
-				continue
-			}
-			proto.ClearExtension(clone, ed)
-		}
-		if u.IsValid() && u.Type() == typeOfBytes {
-			// if it had an unrecognized field, remove values from our copy
-			cloneRv.FieldByName("XXX_unrecognized").Set(reflect.ValueOf(([]byte)(nil)))
-		}
-		bb, err := proto.Marshal(clone)
+	if len(unknownExtensions) > 0 {
 		// pulling in unknown fields is best-effort, so we just ignore errors
-		if err == nil && len(bb) > 0 {
-			m.UnmarshalMerge(bb)
-		}
+		m.UnmarshalMerge(unknownExtensions)
 	}
 	return nil
 }

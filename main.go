@@ -145,6 +145,7 @@ func registerConnect(shell *ishell.Shell) {
 			}
 
 			if docsString != "" {
+				c.Println("Using protobuf client")
 				protoclient := client.NewProto(docsString, logrus.InfoLevel)
 				pClient = protoclient
 
@@ -152,22 +153,24 @@ func registerConnect(shell *ishell.Shell) {
 					protoclient.AddPushResponse(k, v)
 				}
 
-				err := protoclient.LoadServerInfo(addr)
-				if err != nil {
+				if err := protoclient.LoadServerInfo(addr); err != nil {
+					c.Println("Failed to load server info")
 					c.Err(err)
+					return
 				}
 			} else {
+				c.Println("Using json client")
 				pClient = client.New(logrus.InfoLevel)
 			}
 
 			if err := connect(addr); err != nil {
 				c.Println("Failed to connect!")
 				c.Err(err)
-			} else {
-				c.Println("connected!")
-				disconnectedCh = make(chan bool, 1)
-				go readServerMessages(shell)
+				return
 			}
+			c.Println("connected!")
+			disconnectedCh = make(chan bool, 1)
+			go readServerMessages(shell)
 		},
 	})
 }

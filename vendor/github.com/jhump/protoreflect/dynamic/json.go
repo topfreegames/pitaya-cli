@@ -148,6 +148,10 @@ func (m *Message) marshalJSON(b *indentBuffer, opts *jsonpb.Marshaler) error {
 
 		v, ok := m.values[itag]
 		if !ok {
+			if fd.GetOneOf() != nil {
+				// don't print defaults for fields in a oneof
+				continue
+			}
 			v = fd.GetDefaultValue()
 		}
 
@@ -226,7 +230,7 @@ func marshalKnownFieldJSON(b *indentBuffer, fd *desc.FieldDescriptor, v interfac
 		return err
 	}
 
-	if v == nil {
+	if isNil(v) {
 		_, err := b.WriteString("null")
 		return err
 	}
@@ -302,6 +306,14 @@ func marshalKnownFieldJSON(b *indentBuffer, fd *desc.FieldDescriptor, v interfac
 	} else {
 		return marshalKnownFieldValueJSON(b, fd, v, opts)
 	}
+}
+
+func isNil(v interface{}) bool {
+	if v == nil {
+		return true
+	}
+	rv := reflect.ValueOf(v)
+	return rv.Kind() == reflect.Ptr && rv.IsNil()
 }
 
 func marshalKnownFieldMapEntryJSON(b *indentBuffer, mk interface{}, vfd *desc.FieldDescriptor, mv interface{}, opts *jsonpb.Marshaler) error {
@@ -488,10 +500,6 @@ func (m *Message) UnmarshalJSONPB(opts *jsonpb.Unmarshaler, js []byte) error {
 // reset the message, instead merging the data in the given bytes into the
 // existing data in this message.
 func (m *Message) UnmarshalMergeJSONPB(opts *jsonpb.Unmarshaler, js []byte) error {
-	if ok, err := unmarshalWellKnownType(m, opts, js); ok {
-		return err
-	}
-
 	r := newJsReader(js)
 	err := m.unmarshalJson(r, opts)
 	if err != nil {
@@ -505,22 +513,25 @@ func (m *Message) UnmarshalMergeJSONPB(opts *jsonpb.Unmarshaler, js []byte) erro
 	return nil
 }
 
-func unmarshalWellKnownType(m *Message, opts *jsonpb.Unmarshaler, js []byte) (bool, error) {
+func unmarshalWellKnownType(m *Message, r *jsReader, opts *jsonpb.Unmarshaler) (bool, error) {
 	fqn := m.md.GetFullyQualifiedName()
 	if _, ok := wellKnownTypeNames[fqn]; !ok {
 		return false, nil
-	}
-
-	if r, changed := wrapResolver(opts.AnyResolver, m.mf, m.md.GetFile()); changed {
-		newOpts := *opts
-		newOpts.AnyResolver = r
-		opts = &newOpts
 	}
 
 	msgType := proto.MessageType(fqn)
 	if msgType == nil {
 		// wtf?
 		panic(fmt.Sprintf("could not find registered message type for %q", fqn))
+	}
+
+	// extract json value from r
+	var js json.RawMessage
+	if err := json.NewDecoder(r.unread()).Decode(&js); err != nil {
+		return true, err
+	}
+	if err := r.skip(); err != nil {
+		return true, err
 	}
 
 	// unmarshal into well-known type and then convert to dynamic message
@@ -536,6 +547,10 @@ func (m *Message) unmarshalJson(r *jsReader, opts *jsonpb.Unmarshaler) error {
 		newOpts := *opts
 		newOpts.AnyResolver = r
 		opts = &newOpts
+	}
+
+	if ok, err := unmarshalWellKnownType(m, r, opts); ok {
+		return err
 	}
 
 	t, err := r.peek()
@@ -573,8 +588,30 @@ func (m *Message) unmarshalJson(r *jsReader, opts *jsonpb.Unmarshaler) error {
 			if err := mergeField(m, fd, v); err != nil {
 				return err
 			}
-		} else if m.values != nil {
-			delete(m.values, fd.GetNumber())
+		} else if fd.GetOneOf() != nil {
+			// preserve explicit null for oneof fields (this is a little odd but
+			// mimics the behavior of jsonpb with oneofs in generated message types)
+			if fd.GetMessageType() != nil {
+				typ := m.mf.GetKnownTypeRegistry().GetKnownType(fd.GetMessageType().GetFullyQualifiedName())
+				if typ != nil {
+					// typed nil
+					if typ.Kind() != reflect.Ptr {
+						typ = reflect.PtrTo(typ)
+					}
+					v = reflect.Zero(typ).Interface()
+				} else {
+					// can't use nil dynamic message, so we just use empty one instead
+					v = m.mf.NewDynamicMessage(fd.GetMessageType())
+				}
+				if err := m.setField(fd, v); err != nil {
+					return err
+				}
+			} else {
+				// not a message... explicit null makes no sense
+				return fmt.Errorf("Message type %s cannot set field %s to null: it is not a message type", m.md.GetFullyQualifiedName(), f)
+			}
+		} else {
+			m.clearField(fd)
 		}
 	}
 
@@ -585,13 +622,26 @@ func (m *Message) unmarshalJson(r *jsReader, opts *jsonpb.Unmarshaler) error {
 	return nil
 }
 
+func isWellKnownValue(fd *desc.FieldDescriptor) bool {
+	return !fd.IsRepeated() && fd.GetType() == descriptor.FieldDescriptorProto_TYPE_MESSAGE &&
+		fd.GetMessageType().GetFullyQualifiedName() == "google.protobuf.Value"
+}
+
+func isWellKnownListValue(fd *desc.FieldDescriptor) bool {
+	return !fd.IsRepeated() && fd.GetType() == descriptor.FieldDescriptorProto_TYPE_MESSAGE &&
+		fd.GetMessageType().GetFullyQualifiedName() == "google.protobuf.ListValue"
+}
+
 func unmarshalJsField(fd *desc.FieldDescriptor, r *jsReader, mf *MessageFactory, opts *jsonpb.Unmarshaler) (interface{}, error) {
 	t, err := r.peek()
 	if err != nil {
 		return nil, err
 	}
-	if t == nil {
+	if t == nil && !isWellKnownValue(fd) {
 		// if value is null, just return nil
+		// (unless field is google.protobuf.Value, in which case
+		// we fall through to parse it as an instance where its
+		// underlying value is set to a NullValue)
 		r.poll()
 		return nil, nil
 	}
@@ -626,7 +676,7 @@ func unmarshalJsField(fd *desc.FieldDescriptor, r *jsReader, mf *MessageFactory,
 		}
 
 		return mp, nil
-	} else if t == json.Delim('[') {
+	} else if t == json.Delim('[') && !isWellKnownListValue(fd) {
 		// We support parsing an array, even if field is not repeated, to mimic support in proto
 		// binary wire format that supports changing an optional field to repeated and vice versa.
 		// If the field is not repeated, we only keep the last value in the array.
@@ -693,11 +743,6 @@ func unmarshalJsFieldElement(fd *desc.FieldDescriptor, r *jsReader, mf *MessageF
 	t, err := r.peek()
 	if err != nil {
 		return nil, err
-	}
-	if t == nil {
-		// if value is null, just return nil
-		r.poll()
-		return nil, nil
 	}
 
 	switch fd.GetType() {
