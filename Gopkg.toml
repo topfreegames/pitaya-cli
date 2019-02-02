@@ -24,9 +24,8 @@
 #   go-tests = true
 #   unused-packages = true
 
-
 [[constraint]]
-  branch = "master"
+  branch = "kcp-acceptor"
   name = "github.com/topfreegames/pitaya"
 
 [[constraint]]
@@ -40,3 +39,7 @@
 [[override]]
   branch = "master"
   name = "github.com/chzyer/readline"
+
+[[constraint]]
+  name = "github.com/xtaci/kcp-go"
+  version = "5.0.7"

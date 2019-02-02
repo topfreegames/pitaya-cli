@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	homedir "github.com/mitchellh/go-homedir"
 	"github.com/sirupsen/logrus"
@@ -113,7 +114,23 @@ func registerDisconnect(shell *ishell.Shell) {
 	})
 }
 
-func connect(addr string) error {
+func connect(addr string, kcp bool) error {
+	if kcp {
+		// TODO timeout
+		c := make(chan struct{})
+		var err error
+		go func() {
+			err = pClient.ConnectKCP(addr)
+			close(c)
+		}()
+
+		select {
+		case <-c:
+		case <-time.After(3 * time.Second):
+			return errors.New("timeout connecting")
+		}
+		return err
+	}
 	if err := pClient.ConnectToTLS(addr, true); err != nil {
 		if err.Error() == "EOF" {
 			if err := pClient.ConnectTo(addr); err != nil {
@@ -123,8 +140,60 @@ func connect(addr string) error {
 			return err
 		}
 	}
-
 	return nil
+}
+
+func doConnect(c *ishell.Context, shell *ishell.Shell, kcp bool) {
+	if pClient != nil && pClient.ConnectedStatus() {
+		c.Err(errors.New("already connected"))
+		return
+	}
+	var addr string
+	if len(c.Args) == 0 {
+		c.Print("address: ")
+		addr = c.ReadLine()
+	} else {
+		addr = c.Args[0]
+	}
+
+	if docsString != "" {
+		c.Println("Using protobuf client")
+		protoclient := client.NewProto(docsString, logrus.InfoLevel)
+		pClient = protoclient
+
+		for k, v := range pushInfo {
+			protoclient.AddPushResponse(k, v)
+		}
+
+		if err := protoclient.LoadServerInfo(addr); err != nil {
+			c.Println("Failed to load server info")
+			c.Err(err)
+			return
+		}
+	} else {
+		c.Println("Using json client")
+		pClient = client.New(logrus.InfoLevel)
+	}
+
+	if err := connect(addr, kcp); err != nil {
+		c.Println("Failed to connect!")
+		c.Err(err)
+		return
+	}
+
+	c.Println("connected!")
+	disconnectedCh = make(chan bool, 1)
+	go readServerMessages(shell)
+}
+
+func registerConnectKCP(shell *ishell.Shell) {
+	shell.AddCmd(&ishell.Cmd{
+		Name: "connectkcp",
+		Help: "connects to pitaya using kcp protocol",
+		Func: func(c *ishell.Context) {
+			doConnect(c, shell, true)
+		},
+	})
 }
 
 func registerConnect(shell *ishell.Shell) {
@@ -132,45 +201,7 @@ func registerConnect(shell *ishell.Shell) {
 		Name: "connect",
 		Help: "connects to pitaya",
 		Func: func(c *ishell.Context) {
-			if pClient != nil && pClient.ConnectedStatus() {
-				c.Err(errors.New("already connected"))
-				return
-			}
-			var addr string
-			if len(c.Args) == 0 {
-				c.Print("address: ")
-				addr = c.ReadLine()
-			} else {
-				addr = c.Args[0]
-			}
-
-			if docsString != "" {
-				c.Println("Using protobuf client")
-				protoclient := client.NewProto(docsString, logrus.InfoLevel)
-				pClient = protoclient
-
-				for k, v := range pushInfo {
-					protoclient.AddPushResponse(k, v)
-				}
-
-				if err := protoclient.LoadServerInfo(addr); err != nil {
-					c.Println("Failed to load server info")
-					c.Err(err)
-					return
-				}
-			} else {
-				c.Println("Using json client")
-				pClient = client.New(logrus.InfoLevel)
-			}
-
-			if err := connect(addr); err != nil {
-				c.Println("Failed to connect!")
-				c.Err(err)
-				return
-			}
-			c.Println("connected!")
-			disconnectedCh = make(chan bool, 1)
-			go readServerMessages(shell)
+			doConnect(c, shell, false)
 		},
 	})
 }
@@ -235,6 +266,7 @@ func main() {
 	shell.Println("Pitaya REPL Client")
 
 	registerConnect(shell)
+	registerConnectKCP(shell)
 	registerDisconnect(shell)
 	registerRequest(shell)
 	registerNotify(shell)
