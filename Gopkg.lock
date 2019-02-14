@@ -371,7 +371,7 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:67e18f9bd60b62a52f4d917fa2e73e6f4e1cb407c75652d2fc47b85d82f28e78"
+  digest = "1:e74e65997eff2d82c090800fe08eec730ae9d12ea8c8494d178348422e2d1a8e"
   name = "github.com/topfreegames/pitaya"
   packages = [
     ".",
@@ -410,15 +410,7 @@
     "worker",
   ]
   pruneopts = "UT"
-  revision = "eab89799e12c6233a6d1abacb757e52f9ec2efd6"
-
-[[projects]]
-  digest = "1:a988307f0c4c8015c00cc122433879cf8eb4da05bd31b2f578795531a7815b13"
-  name = "github.com/topfreegames/viaproxy"
-  packages = ["."]
-  pruneopts = "UT"
-  revision = "05f07d250022488417546d8056f49856b253c712"
-  version = "v0.1.2"
+  revision = "dc28e42f6eb0f4f3ca2d00f7eebfe986a5964bc9"
 
 [[projects]]
   branch = "master"
