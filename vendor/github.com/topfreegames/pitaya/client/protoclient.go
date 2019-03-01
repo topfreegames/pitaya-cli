@@ -29,7 +29,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gogo/protobuf/proto"
+	"github.com/golang/protobuf/proto"
 	protobuf "github.com/golang/protobuf/protoc-gen-go/descriptor"
 	"github.com/jhump/protoreflect/desc"
 	"github.com/jhump/protoreflect/dynamic"
@@ -335,6 +335,7 @@ func (pc *ProtoClient) LoadServerInfo(addr string) error {
 	response := <-pc.Client.IncomingMsgChan
 
 	docs := &protos.Doc{}
+	println("henrod", string(response.Data))
 	if err := proto.Unmarshal(response.Data, docs); err != nil {
 		return err
 	}

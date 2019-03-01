@@ -20,7 +20,7 @@
 
 package worker
 
-import "github.com/gogo/protobuf/proto"
+import "github.com/golang/protobuf/proto"
 
 type rpcInfo struct {
 	Route    string
@@ -31,10 +31,4 @@ type rpcInfo struct {
 
 type rpcRoute struct {
 	Route string
-}
-
-// Logger defines methods for worker's logger
-type Logger interface {
-	Println(...interface{})
-	Printf(string, ...interface{})
 }

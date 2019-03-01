@@ -25,7 +25,7 @@ import (
 	"encoding/json"
 	"os"
 
-	"github.com/gogo/protobuf/proto"
+	"github.com/golang/protobuf/proto"
 	"github.com/topfreegames/pitaya/config"
 	"github.com/topfreegames/pitaya/constants"
 	"github.com/topfreegames/pitaya/logger"
@@ -64,7 +64,7 @@ func NewWorker(config *config.Config) (*Worker, error) {
 }
 
 // SetLogger overwrites worker logger
-func (w *Worker) SetLogger(logger Logger) {
+func (w *Worker) SetLogger(logger logger.Logger) {
 	workers.Logger = logger
 }
 

@@ -23,7 +23,7 @@ package agent
 import (
 	"context"
 	gojson "encoding/json"
-	"errors"
+	e "errors"
 	"fmt"
 	"net"
 	"strings"
@@ -36,6 +36,7 @@ import (
 	"github.com/topfreegames/pitaya/conn/message"
 	"github.com/topfreegames/pitaya/conn/packet"
 	"github.com/topfreegames/pitaya/constants"
+	"github.com/topfreegames/pitaya/errors"
 	"github.com/topfreegames/pitaya/logger"
 	"github.com/topfreegames/pitaya/metrics"
 	"github.com/topfreegames/pitaya/protos"
@@ -65,16 +66,17 @@ type (
 		chSend             chan pendingMessage // push message queue
 		chStopHeartbeat    chan struct{}       // stop heartbeats
 		chStopWrite        chan struct{}       // stop writing messages
+		closeMutex         sync.Mutex
 		conn               net.Conn            // low-level conn fd
 		decoder            codec.PacketDecoder // binary decoder
 		encoder            codec.PacketEncoder // binary encoder
 		heartbeatTimeout   time.Duration
-		lastAt             int64                // last heartbeat unix time stamp
-		messagesBufferSize int                  // size of the pending messages buffer
+		lastAt             int64 // last heartbeat unix time stamp
+		messageEncoder     message.Encoder
+		messagesBufferSize int // size of the pending messages buffer
+		metricsReporters   []metrics.Reporter
 		serializer         serialize.Serializer // message serializer
 		state              int32                // current agent state
-		messageEncoder     message.Encoder
-		metricsReporters   []metrics.Reporter
 	}
 
 	pendingMessage struct {
@@ -108,9 +110,9 @@ func NewAgent(
 		appDieChan:         dieChan,
 		chDie:              make(chan struct{}),
 		chSend:             make(chan pendingMessage, messagesBufferSize),
-		messagesBufferSize: messagesBufferSize,
 		chStopHeartbeat:    make(chan struct{}),
 		chStopWrite:        make(chan struct{}),
+		messagesBufferSize: messagesBufferSize,
 		conn:               conn,
 		decoder:            packetDecoder,
 		encoder:            packetEncoder,
@@ -167,14 +169,14 @@ func (a *Agent) ResponseMID(ctx context.Context, mid uint, v interface{}, isErro
 	if a.GetStatus() == constants.StatusClosed {
 		err := constants.ErrBrokenPipe
 		tracing.FinishSpan(ctx, err)
-		metrics.ReportTimingFromCtx(ctx, a.metricsReporters, handlerType, true)
+		metrics.ReportTimingFromCtx(ctx, a.metricsReporters, handlerType, err)
 		return err
 	}
 
 	if mid <= 0 {
 		err := constants.ErrSessionOnNotify
 		tracing.FinishSpan(ctx, err)
-		metrics.ReportTimingFromCtx(ctx, a.metricsReporters, handlerType, true)
+		metrics.ReportTimingFromCtx(ctx, a.metricsReporters, handlerType, err)
 		return err
 	}
 
@@ -193,6 +195,8 @@ func (a *Agent) ResponseMID(ctx context.Context, mid uint, v interface{}, isErro
 // Close closes the agent, cleans inner state and closes low-level connection.
 // Any blocked Read or Write operations will be unblocked and return errors.
 func (a *Agent) Close() error {
+	a.closeMutex.Lock()
+	defer a.closeMutex.Unlock()
 	if a.GetStatus() == constants.StatusClosed {
 		return constants.ErrCloseClosedSession
 	}
@@ -352,7 +356,7 @@ func (a *Agent) write() {
 				if err != nil {
 					tracing.FinishSpan(data.ctx, err)
 					if data.typ == message.Response {
-						metrics.ReportTimingFromCtx(data.ctx, a.metricsReporters, handlerType, true)
+						metrics.ReportTimingFromCtx(data.ctx, a.metricsReporters, handlerType, err)
 					}
 					logger.Log.Error("cannot serialize message and respond to the client ", err.Error())
 					break
@@ -371,7 +375,7 @@ func (a *Agent) write() {
 			if err != nil {
 				tracing.FinishSpan(data.ctx, err)
 				if data.typ == message.Response {
-					metrics.ReportTimingFromCtx(data.ctx, a.metricsReporters, handlerType, true)
+					metrics.ReportTimingFromCtx(data.ctx, a.metricsReporters, handlerType, err)
 				}
 				logger.Log.Error(err.Error())
 				break
@@ -382,7 +386,7 @@ func (a *Agent) write() {
 			if err != nil {
 				tracing.FinishSpan(data.ctx, err)
 				if data.typ == message.Response {
-					metrics.ReportTimingFromCtx(data.ctx, a.metricsReporters, handlerType, true)
+					metrics.ReportTimingFromCtx(data.ctx, a.metricsReporters, handlerType, err)
 				}
 				logger.Log.Error(err)
 				break
@@ -391,7 +395,7 @@ func (a *Agent) write() {
 			if _, err := a.conn.Write(p); err != nil {
 				tracing.FinishSpan(data.ctx, err)
 				if data.typ == message.Response {
-					metrics.ReportTimingFromCtx(data.ctx, a.metricsReporters, handlerType, true)
+					metrics.ReportTimingFromCtx(data.ctx, a.metricsReporters, handlerType, err)
 				}
 				logger.Log.Error(err.Error())
 				return
@@ -399,7 +403,15 @@ func (a *Agent) write() {
 			var e error
 			tracing.FinishSpan(data.ctx, e)
 			if data.typ == message.Response {
-				metrics.ReportTimingFromCtx(data.ctx, a.metricsReporters, handlerType, m.Err)
+				var rErr error
+
+				if m.Err {
+					// default code is overwritten, if any
+					rErr = &errors.Error{Code: errors.ErrUnknownCode}
+					_ = a.serializer.Unmarshal(m.Data, rErr)
+				}
+
+				metrics.ReportTimingFromCtx(data.ctx, a.metricsReporters, handlerType, rErr)
 			}
 		case <-a.chStopWrite:
 			return
@@ -409,7 +421,7 @@ func (a *Agent) write() {
 
 // SendRequest sends a request to a server
 func (a *Agent) SendRequest(ctx context.Context, serverID, route string, v interface{}) (*protos.Response, error) {
-	return nil, errors.New("not implemented")
+	return nil, e.New("not implemented")
 }
 
 // AnswerWithError answers with an error
