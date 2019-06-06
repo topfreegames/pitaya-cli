@@ -28,7 +28,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
+	"github.com/google/uuid"
+	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/topfreegames/pitaya/agent"
 	"github.com/topfreegames/pitaya/cluster"
 	"github.com/topfreegames/pitaya/component"
@@ -182,7 +183,7 @@ func (h *HandlerService) Handle(conn net.Conn) {
 	for {
 		n, err := conn.Read(buf)
 		if err != nil {
-			logger.Log.Debugf("Read message error: %s, session will be closed immediately", err.Error())
+			logger.Log.Debugf("Read message error: '%s', session will be closed immediately", err.Error())
 			return
 		}
 
@@ -191,7 +192,7 @@ func (h *HandlerService) Handle(conn net.Conn) {
 		// (warning): decoder uses slice for performance, packet data should be copied before next Decode
 		packets, err := h.decoder.Decode(buf[:n])
 		if err != nil {
-			logger.Log.Error(err.Error())
+			logger.Log.Errorf("Failed to decode message: %s", err.Error())
 			return
 		}
 
@@ -203,7 +204,7 @@ func (h *HandlerService) Handle(conn net.Conn) {
 		// process all packet
 		for i := range packets {
 			if err := h.processPacket(a, packets[i]); err != nil {
-				logger.Log.Error(err.Error())
+				logger.Log.Errorf("Failed to process packet: %s", err.Error())
 				return
 			}
 		}
@@ -262,19 +263,23 @@ func (h *HandlerService) processPacket(a *agent.Agent, p *packet.Packet) error {
 }
 
 func (h *HandlerService) processMessage(a *agent.Agent, msg *message.Message) {
+	requestID := uuid.New()
 	ctx := pcontext.AddToPropagateCtx(context.Background(), constants.StartTimeKey, time.Now().UnixNano())
 	ctx = pcontext.AddToPropagateCtx(ctx, constants.RouteKey, msg.Route)
+	ctx = pcontext.AddToPropagateCtx(ctx, constants.RequestIDKey, requestID.String())
 	tags := opentracing.Tags{
-		"local.id":  h.server.ID,
-		"span.kind": "server",
-		"msg.type":  strings.ToLower(msg.Type.String()),
+		"local.id":   h.server.ID,
+		"span.kind":  "server",
+		"msg.type":   strings.ToLower(msg.Type.String()),
+		"user.id":    a.Session.UID(),
+		"request.id": requestID.String(),
 	}
 	ctx = tracing.StartSpan(ctx, msg.Route, tags)
 	ctx = context.WithValue(ctx, constants.SessionCtxKey, a.Session)
 
 	r, err := route.Decode(msg.Route)
 	if err != nil {
-		logger.Log.Error(err.Error())
+		logger.Log.Errorf("Failed to decode route: %s", err.Error())
 		a.AnswerWithError(ctx, msg.ID, e.NewError(err, e.ErrBadRequestCode))
 		return
 	}
@@ -312,13 +317,13 @@ func (h *HandlerService) localProcess(ctx context.Context, a *agent.Agent, route
 	ret, err := processHandlerMessage(ctx, route, h.serializer, a.Session, msg.Data, msg.Type, false)
 	if msg.Type != message.Notify {
 		if err != nil {
-			logger.Log.Error(err)
+			logger.Log.Errorf("Failed to process handler message: %s", err.Error())
 			a.AnswerWithError(ctx, mid, err)
 		} else {
 			a.Session.ResponseMID(ctx, mid, ret)
 		}
 	} else {
-		metrics.ReportTimingFromCtx(ctx, h.metricsReporters, handlerType, false)
+		metrics.ReportTimingFromCtx(ctx, h.metricsReporters, handlerType, nil)
 		tracing.FinishSpan(ctx, err)
 	}
 }

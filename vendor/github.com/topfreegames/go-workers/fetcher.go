@@ -54,40 +54,32 @@ func (f *fetch) processOldMessages() {
 }
 
 func (f *fetch) Fetch() {
-	messages := make(chan string)
-
 	f.processOldMessages()
 
-	go func(c chan string) {
+	go func() {
 		for {
 			// f.Close() has been called
 			if f.Closed() {
 				break
 			}
 			<-f.Ready()
-			f.tryFetchMessage(c)
+			f.tryFetchMessage()
 		}
-	}(messages)
+	}()
 
-	f.handleMessages(messages)
-}
-
-func (f *fetch) handleMessages(messages chan string) {
 	for {
 		select {
-		case message := <-messages:
-			f.sendMessage(message)
 		case <-f.stop:
 			// Stop the redis-polling goroutine
 			close(f.closed)
 			// Signal to Close() that the fetcher has stopped
 			close(f.exit)
-			return
+			break
 		}
 	}
 }
 
-func (f *fetch) tryFetchMessage(messages chan string) {
+func (f *fetch) tryFetchMessage() {
 	conn := Config.Pool.Get()
 	defer conn.Close()
 
@@ -96,11 +88,11 @@ func (f *fetch) tryFetchMessage(messages chan string) {
 	if err != nil {
 		// If redis returns null, the queue is empty. Just ignore the error.
 		if err.Error() != "redigo: nil returned" {
-			Logger.Println("ERR: ", err)
+			Logger.Errorln("failed to fetch message", err)
 			time.Sleep(1 * time.Second)
 		}
 	} else {
-		messages <- message
+		f.sendMessage(message)
 	}
 }
 
@@ -108,7 +100,7 @@ func (f *fetch) sendMessage(message string) {
 	msg, err := NewMsg(message)
 
 	if err != nil {
-		Logger.Println("ERR: Couldn't create message from", message, ":", err)
+		Logger.Errorln("failed to create message from", message, ":", err)
 		return
 	}
 
@@ -153,7 +145,7 @@ func (f *fetch) inprogressMessages() []string {
 
 	messages, err := redis.Strings(conn.Do("lrange", f.inprogressQueue(), 0, -1))
 	if err != nil {
-		Logger.Println("ERR: ", err)
+		Logger.Errorln("failed to fetch messages in progress", err)
 	}
 
 	return messages

@@ -26,7 +26,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/gogo/protobuf/proto"
+	"github.com/golang/protobuf/proto"
 	"github.com/topfreegames/pitaya/component"
 	"github.com/topfreegames/pitaya/conn/message"
 	"github.com/topfreegames/pitaya/constants"
@@ -103,10 +103,7 @@ func executeBeforePipeline(ctx context.Context, data interface{}) (interface{}, 
 		for _, h := range pipeline.BeforeHandler.Handlers {
 			res, err = h(ctx, res)
 			if err != nil {
-				// TODO: not sure if this should be logged
-				// one may want to have a before filter that prevents handler execution
-				// example: auth
-				logger.Log.Errorf("pitaya/handler: broken pipeline: %s", err.Error())
+				logger.Log.Debugf("pitaya/handler: broken pipeline: %s", err.Error())
 				return res, err
 			}
 		}
@@ -114,27 +111,20 @@ func executeBeforePipeline(ctx context.Context, data interface{}) (interface{}, 
 	return res, nil
 }
 
-func executeAfterPipeline(ctx context.Context, ser serialize.Serializer, res interface{}) interface{} {
-	var err error
+func executeAfterPipeline(ctx context.Context, res interface{}, err error) (interface{}, error) {
 	ret := res
 	if len(pipeline.AfterHandler.Handlers) > 0 {
 		for _, h := range pipeline.AfterHandler.Handlers {
-			ret, err = h(ctx, ret)
-			if err != nil {
-				logger.Log.Debugf("broken pipeline, error: %s", err.Error())
-				// err can be ignored since serializer was already tested previously
-				ret, _ = util.GetErrorPayload(ser, err)
-				return ret
-			}
+			ret, err = h(ctx, ret, err)
 		}
 	}
-	return ret
+	return ret, err
 }
 
 func serializeReturn(ser serialize.Serializer, ret interface{}) ([]byte, error) {
 	res, err := util.SerializeOrRaw(ser, ret)
 	if err != nil {
-		logger.Log.Error(err.Error())
+		logger.Log.Errorf("Failed to serialize return: %s", err.Error())
 		res, err = util.GetErrorPayload(ser, err)
 		if err != nil {
 			logger.Log.Error("cannot serialize message and respond to the client ", err.Error())
@@ -153,6 +143,9 @@ func processHandlerMessage(
 	msgTypeIface interface{},
 	remote bool,
 ) ([]byte, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	ctx = context.WithValue(ctx, constants.SessionCtxKey, session)
 	ctx = util.CtxWithDefaultLogger(ctx, rt.String(), session.UID())
 
@@ -165,11 +158,13 @@ func processHandlerMessage(
 	if err != nil {
 		return nil, e.NewError(err, e.ErrInternalCode)
 	}
+
+	logger := ctx.Value(constants.LoggerCtxKey).(logger.Logger)
 	exit, err := h.ValidateMessageType(msgType)
 	if err != nil && exit {
 		return nil, e.NewError(err, e.ErrBadRequestCode)
 	} else if err != nil {
-		logger.Log.Warn(err.Error())
+		logger.Warnf("invalid message type, error: %s", err.Error())
 	}
 
 	// First unmarshal the handler arg that will be passed to
@@ -183,17 +178,13 @@ func processHandlerMessage(
 		return nil, err
 	}
 
-	logger.Log.Debugf("SID=%d, Data=%s", session.ID(), data)
+	logger.Debugf("SID=%d, Data=%s", session.ID(), data)
 	args := []reflect.Value{h.Receiver, reflect.ValueOf(ctx)}
 	if arg != nil {
 		args = append(args, reflect.ValueOf(arg))
 	}
 
 	resp, err := util.Pcall(h.Method, args)
-	if err != nil {
-		return nil, err
-	}
-
 	if remote && msgType == message.Notify {
 		// This is a special case and should only happen with nats rpc client
 		// because we used nats request we have to answer to it or else a timeout
@@ -203,7 +194,11 @@ func processHandlerMessage(
 		resp = []byte("ack")
 	}
 
-	resp = executeAfterPipeline(ctx, serializer, resp)
+	resp, err = executeAfterPipeline(ctx, resp, err)
+	if err != nil {
+		return nil, err
+	}
+
 	ret, err := serializeReturn(serializer, resp)
 	if err != nil {
 		return nil, err

@@ -118,7 +118,7 @@ func (p *PrometheusReporter) registerMetrics(
 			Objectives:  map[float64]float64{0.7: 0.02, 0.95: 0.005, 0.99: 0.001},
 			ConstLabels: constLabels,
 		},
-		append([]string{"route", "status", "type"}, additionalLabelsKeys...),
+		append([]string{"route", "status", "type", "code"}, additionalLabelsKeys...),
 	)
 
 	// ProcessDelay summary
@@ -234,8 +234,8 @@ func (p *PrometheusReporter) registerMetrics(
 		append([]string{"queue"}, additionalLabelsKeys...),
 	)
 
-	p.countReportersMap[WorkerJobsTotal] = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
+	p.gaugeReportersMap[WorkerJobsTotal] = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
 			Namespace:   "pitaya",
 			Subsystem:   "worker",
 			Name:        WorkerJobsTotal,
@@ -243,6 +243,17 @@ func (p *PrometheusReporter) registerMetrics(
 			ConstLabels: constLabels,
 		},
 		append([]string{"status"}, additionalLabelsKeys...),
+	)
+
+	p.countReportersMap[ExceededRateLimiting] = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace:   "pitaya",
+			Subsystem:   "acceptor",
+			Name:        ExceededRateLimiting,
+			Help:        "the number of blocked requests by exceeded rate limiting",
+			ConstLabels: constLabels,
+		},
+		additionalLabelsKeys,
 	)
 
 	toRegister := make([]prometheus.Collector, 0)

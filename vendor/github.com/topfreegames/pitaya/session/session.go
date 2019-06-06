@@ -29,7 +29,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/gogo/protobuf/proto"
+	"github.com/golang/protobuf/proto"
 	nats "github.com/nats-io/go-nats"
 	"github.com/topfreegames/pitaya/constants"
 	"github.com/topfreegames/pitaya/logger"
@@ -186,6 +186,17 @@ func OnSessionClose(f func(s *Session)) {
 		}
 	}
 	SessionCloseCallbacks = append(SessionCloseCallbacks, f)
+}
+
+// CloseAll calls Close on all sessions
+func CloseAll() {
+	logger.Log.Debugf("closing all sessions, %d sessions", SessionCount)
+	sessionsByID.Range(func(_, value interface{}) bool {
+		s := value.(*Session)
+		s.Close()
+		return true
+	})
+	logger.Log.Debug("finished closing sessions")
 }
 
 func (s *Session) updateEncodedData() error {

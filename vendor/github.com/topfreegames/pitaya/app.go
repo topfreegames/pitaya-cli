@@ -439,6 +439,7 @@ func Start() {
 
 	logger.Log.Warn("server is stopping...")
 
+	session.CloseAll()
 	shutdownModules()
 	shutdownComponents()
 }
@@ -521,12 +522,22 @@ func Error(err error, code string, metadata ...map[string]string) *errors.Error 
 
 // GetSessionFromCtx retrieves a session from a given context
 func GetSessionFromCtx(ctx context.Context) *session.Session {
-	return ctx.Value(constants.SessionCtxKey).(*session.Session)
+	sessionVal := ctx.Value(constants.SessionCtxKey)
+	if sessionVal == nil {
+		logger.Log.Warn("ctx doesn't contain a session, are you calling GetSessionFromCtx from inside a remote?")
+		return nil
+	}
+	return sessionVal.(*session.Session)
 }
 
 // GetDefaultLoggerFromCtx returns the default logger from the given context
 func GetDefaultLoggerFromCtx(ctx context.Context) logger.Logger {
-	return ctx.Value(constants.LoggerCtxKey).(logger.Logger)
+	l := ctx.Value(constants.LoggerCtxKey)
+	if l == nil {
+		return logger.Log
+	}
+
+	return l.(logger.Logger)
 }
 
 // AddMetricTagsToPropagateCtx adds a key and metric tags that will

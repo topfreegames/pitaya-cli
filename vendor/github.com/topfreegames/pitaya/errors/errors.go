@@ -33,6 +33,9 @@ const ErrNotFoundCode = "PIT-404"
 // ErrBadRequestCode is a string code representing a bad request related error
 const ErrBadRequestCode = "PIT-400"
 
+// ErrClientClosedRequest is a string code representing the client closed request error
+const ErrClientClosedRequest = "PIT-499"
+
 // Error is an error with a code, message and metadata
 type Error struct {
 	Code     string
@@ -73,4 +76,24 @@ func mergeMetadatas(pitayaErr *Error, metadata map[string]string) {
 	for key, value := range metadata {
 		pitayaErr.Metadata[key] = value
 	}
+}
+
+// CodeFromError returns the code of error.
+// If error is nil, return empty string.
+// If error is not a pitaya error, returns unkown code
+func CodeFromError(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	pitayaErr, ok := err.(*Error)
+	if !ok {
+		return ErrUnknownCode
+	}
+
+	if pitayaErr == nil {
+		return ""
+	}
+
+	return pitayaErr.Code
 }

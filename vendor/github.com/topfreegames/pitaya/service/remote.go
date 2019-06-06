@@ -26,7 +26,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/gogo/protobuf/proto"
+	"github.com/golang/protobuf/proto"
 
 	"github.com/topfreegames/pitaya/agent"
 	"github.com/topfreegames/pitaya/cluster"
@@ -98,13 +98,13 @@ func (r *RemoteService) remoteProcess(
 	switch msg.Type {
 	case message.Request:
 		if err != nil {
-			logger.Log.Error(err)
+			logger.Log.Errorf("Failed to process remote: %s", err.Error())
 			a.AnswerWithError(ctx, msg.ID, err)
 			return
 		}
 		err := a.Session.ResponseMID(ctx, msg.ID, res.Data)
 		if err != nil {
-			logger.Log.Error(err)
+			logger.Log.Errorf("Failed to respond remote: %s", err.Error())
 			a.AnswerWithError(ctx, msg.ID, err)
 		}
 	case message.Notify:
@@ -126,6 +126,7 @@ func (r *RemoteService) AddRemoteBindingListener(bindingListener cluster.RemoteB
 // Call processes a remote call
 func (r *RemoteService) Call(ctx context.Context, req *protos.Request) (*protos.Response, error) {
 	c, err := util.GetContextFromRequest(req, r.server.ID)
+	c = util.StartSpanFromRequest(c, r.server.ID, req.GetMsg().GetRoute())
 	var res *protos.Response
 	if err != nil {
 		res = &protos.Response{

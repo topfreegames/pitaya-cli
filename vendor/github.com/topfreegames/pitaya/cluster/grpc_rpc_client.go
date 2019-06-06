@@ -106,17 +106,14 @@ func (gs *GRPCClient) Call(ctx context.Context, rpcType protos.RPCType, route *r
 	}
 	if c, ok := gs.clientMap.Load(server.ID); ok {
 		ctxT, done := context.WithTimeout(ctx, gs.reqTimeout)
+		defer done()
 
-		defer func() {
-			if gs.metricsReporters != nil {
-				startTime := time.Now()
-				ctxT = pcontext.AddToPropagateCtx(ctxT, constants.StartTimeKey, startTime.UnixNano())
-				ctxT = pcontext.AddToPropagateCtx(ctxT, constants.RouteKey, route.String())
-				errored := err != nil
-				metrics.ReportTimingFromCtx(ctx, gs.metricsReporters, "rpc", errored)
-			}
-			done()
-		}()
+		if gs.metricsReporters != nil {
+			startTime := time.Now()
+			ctxT = pcontext.AddToPropagateCtx(ctxT, constants.StartTimeKey, startTime.UnixNano())
+			ctxT = pcontext.AddToPropagateCtx(ctxT, constants.RouteKey, route.String())
+			defer metrics.ReportTimingFromCtx(ctxT, gs.metricsReporters, "rpc", err)
+		}
 
 		res, err := c.(protos.PitayaClient).Call(ctxT, &req)
 		if err != nil {
@@ -126,12 +123,12 @@ func (gs *GRPCClient) Call(ctx context.Context, rpcType protos.RPCType, route *r
 			if res.Error.Code == "" {
 				res.Error.Code = pitErrors.ErrUnknownCode
 			}
-			e := &pitErrors.Error{
+			err = &pitErrors.Error{
 				Code:     res.Error.Code,
 				Message:  res.Error.Msg,
 				Metadata: res.Error.Metadata,
 			}
-			return nil, e
+			return nil, err
 		}
 		return res, nil
 
@@ -220,7 +217,7 @@ func (gs *GRPCClient) AddServer(sv *Server) {
 
 	host, portKey = gs.getServerHost(sv)
 	if host == "" {
-		logger.Log.Errorf("server %s has no grpc-host specified in metadata", sv.ID)
+		logger.Log.Errorf("server %s has no grpcHost specified in metadata", sv.ID)
 		return
 	}
 
@@ -230,9 +227,7 @@ func (gs *GRPCClient) AddServer(sv *Server) {
 	}
 
 	address := fmt.Sprintf("%s:%s", host, port)
-	ctxT, done := context.WithTimeout(context.Background(), gs.dialTimeout)
-	defer done()
-	conn, err := grpc.DialContext(ctxT, address, grpc.WithInsecure())
+	conn, err := grpc.Dial(address, grpc.WithInsecure())
 	if err != nil {
 		logger.Log.Errorf("unable to connect to server %s at %s: %v", sv.ID, address, err)
 		return
@@ -283,8 +278,8 @@ func (gs *GRPCClient) getServerHost(sv *Server) (host, portKey string) {
 		return internalHost, constants.GRPCPortKey
 	}
 
-	if gs.infoRetriever.Region() == serverRegion {
-		logger.Log.Infof("server %s is in same region, using internal host", sv.ID)
+	if gs.infoRetriever.Region() == serverRegion || !hasExternal {
+		logger.Log.Infof("server %s is in same region or external host not provided, using internal host", sv.ID)
 		return internalHost, constants.GRPCPortKey
 	}
 

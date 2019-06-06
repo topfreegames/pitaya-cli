@@ -68,6 +68,9 @@ var PeerServiceKey = "peer.service"
 // StartTimeKey is the key holding the request start time (in ns) to be sent over the context
 var StartTimeKey = "req-start-time"
 
+// RequestIDKey is the key holding the request id to be sent over the context
+var RequestIDKey = "request.id"
+
 // RouteKey is the key holding the request route to be sent over the context
 var RouteKey = "req-route"
 
@@ -76,13 +79,13 @@ var RouteKey = "req-route"
 var MetricTagsKey = "metric-tags"
 
 // GRPCHostKey is the key for grpc host on server metadata
-var GRPCHostKey = "grpc-host"
+var GRPCHostKey = "grpcHost"
 
 // GRPCExternalHostKey is the key for grpc external host on server metadata
 var GRPCExternalHostKey = "grpc-external-host"
 
 // GRPCPortKey is the key for grpc port on server metadata
-var GRPCPortKey = "grpc-port"
+var GRPCPortKey = "grpcPort"
 
 // GRPCExternalPortKey is the key for grpc external port on server metadata
 var GRPCExternalPortKey = "grpc-external-port"

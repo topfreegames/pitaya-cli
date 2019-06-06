@@ -14,7 +14,7 @@ setup-ci:
 
 setup-protobuf-macos:
 	@brew install protobuf
-	@go get -u github.com/gogo/protobuf/protoc-gen-gogofaster
+	@go get github.com/golang/protobuf/protoc-gen-go
 
 run-chat-example:
 	@cd examples/testing && docker-compose up -d etcd nats && cd ../demo/chat/ && go run main.go
@@ -49,10 +49,13 @@ run-cluster-worker-example-worker:
 run-custom-metrics-example:
 	@cd examples/demo/custom_metrics && go run main.go --port 3250
 
+run-rate-limiting-example:
+	@go run examples/demo/rate_limiting/main.go
+
 protos-compile:
 	@cd benchmark/testdata && ./gen_proto.sh
-	@protoc -I pitaya-protos/ pitaya-protos/*.proto --gogofaster_out=plugins=grpc:protos
-	@protoc -I pitaya-protos/test pitaya-protos/test/*.proto --gogofaster_out=protos/test
+	@protoc -I pitaya-protos/ pitaya-protos/*.proto --go_out=plugins=grpc:protos
+	@protoc -I pitaya-protos/test pitaya-protos/test/*.proto --go_out=protos/test
 
 rm-test-temp-files:
 	@rm -f cluster/127.0.0.1* 127.0.0.1*
@@ -139,3 +142,6 @@ test-coverage-func coverage-func: test-coverage merge-profiles
 
 serializer-mock:
 	@mockgen github.com/topfreegames/pitaya/serialize Serializer | sed 's/mock_serialize/mocks/' > serialize/mocks/serializer.go
+
+acceptor-mock:
+	@mockgen github.com/topfreegames/pitaya/acceptor Acceptor | sed 's/mock_acceptor/mocks/' > mocks/acceptor.go

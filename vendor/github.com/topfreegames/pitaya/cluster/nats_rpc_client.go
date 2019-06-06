@@ -25,7 +25,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/gogo/protobuf/proto"
+	"github.com/golang/protobuf/proto"
 	nats "github.com/nats-io/go-nats"
 	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/topfreegames/pitaya/config"
@@ -171,8 +171,7 @@ func (ns *NatsRPCClient) Call(
 		ctx = pcontext.AddToPropagateCtx(ctx, constants.RouteKey, route.String())
 		defer func() {
 			typ := "rpc"
-			errored := err != nil
-			metrics.ReportTimingFromCtx(ctx, ns.metricsReporters, typ, errored)
+			metrics.ReportTimingFromCtx(ctx, ns.metricsReporters, typ, err)
 		}()
 	}
 	m, err = ns.conn.Request(getChannel(server.Type, server.ID), marshalledData, ns.reqTimeout)
@@ -190,12 +189,12 @@ func (ns *NatsRPCClient) Call(
 		if res.Error.Code == "" {
 			res.Error.Code = errors.ErrUnknownCode
 		}
-		e := &errors.Error{
+		err = &errors.Error{
 			Code:     res.Error.Code,
 			Message:  res.Error.Msg,
 			Metadata: res.Error.Metadata,
 		}
-		return nil, e
+		return nil, err
 	}
 	return res, nil
 }

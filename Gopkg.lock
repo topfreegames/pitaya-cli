@@ -116,7 +116,7 @@
   version = "v1.1.1"
 
 [[projects]]
-  digest = "1:a900f61eec53062419a966d0cf0f4afdce2eefdf39d976fe2fc7b7289b99c038"
+  digest = "1:4fbf68bee2a60f6af6414572936edb295f6f26b73c6fb25ab0e7b03b013854f5"
   name = "github.com/golang/protobuf"
   packages = [
     "jsonpb",
@@ -131,8 +131,8 @@
     "ptypes/wrappers",
   ]
   pruneopts = "UT"
-  revision = "b4deda0973fb4c70b50d226b1af49f3da59f5265"
-  version = "v1.1.0"
+  revision = "aa810b61a9c79d51363740d207bb46cf8e620ed5"
+  version = "v1.2.0"
 
 [[projects]]
   digest = "1:8f8811f9be822914c3a25c6a071e93beb4c805d7b026cbf298bc577bc1cc945b"
@@ -362,16 +362,16 @@
   version = "v1.0.2"
 
 [[projects]]
-  digest = "1:a35142e7dae983dc77f9822b754f1d9e41bfe9767d11585ab24dcd2ec871be0f"
+  digest = "1:04e729cc283db01695b1df9e036ecf1feb06988ec9e4ca5f6406a3f374967ea5"
   name = "github.com/topfreegames/go-workers"
   packages = ["."]
   pruneopts = "UT"
-  revision = "debd68e29f6123083fb906c7a6352c748203538a"
-  version = "v0.0.1"
+  revision = "d1be24994f2aef33257256035eaba70a112bf57f"
+  version = "v1.0.0"
 
 [[projects]]
   branch = "master"
-  digest = "1:e74e65997eff2d82c090800fe08eec730ae9d12ea8c8494d178348422e2d1a8e"
+  digest = "1:3fb5810153d91a73a49655d8101c76f17f98b5fb2498366710632b5b2c540214"
   name = "github.com/topfreegames/pitaya"
   packages = [
     ".",
@@ -410,7 +410,7 @@
     "worker",
   ]
   pruneopts = "UT"
-  revision = "dc28e42f6eb0f4f3ca2d00f7eebfe986a5964bc9"
+  revision = "cc45f7be8a548c83133c684ef006014ac66ea8e3"
 
 [[projects]]
   branch = "master"

@@ -76,6 +76,7 @@ func (c *Config) fillDefaultValues() {
 		"pitaya.cluster.sd.etcd.prefix":                         "pitaya/",
 		"pitaya.cluster.sd.etcd.revoke.timeout":                 "5s",
 		"pitaya.cluster.sd.etcd.syncservers.interval":           "120s",
+		"pitaya.cluster.sd.etcd.shutdown.delay":                 "10ms",
 		// the sum of this config among all the frontend servers should always be less than
 		// the sum of pitaya.buffer.cluster.rpc.server.nats.messages, for covering the worst case scenario
 		// a single backend server should have the config pitaya.buffer.cluster.rpc.server.nats.messages bigger
@@ -104,6 +105,9 @@ func (c *Config) fillDefaultValues() {
 		"pitaya.modules.bindingstorage.etcd.endpoints":     "localhost:2379",
 		"pitaya.modules.bindingstorage.etcd.leasettl":      "1h",
 		"pitaya.modules.bindingstorage.etcd.prefix":        "pitaya/",
+		"pitaya.conn.ratelimiting.limit":                   20,
+		"pitaya.conn.ratelimiting.interval":                "1s",
+		"pitaya.conn.ratelimiting.forcedisable":            false,
 		"pitaya.session.unique":                            true,
 		"pitaya.worker.concurrency":                        1,
 		"pitaya.worker.redis.pool":                         "10",
