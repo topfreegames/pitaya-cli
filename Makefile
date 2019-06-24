@@ -1,6 +1,6 @@
 build:
 	@mkdir -p out
-	@go build -o ./out/pitaya-cli-darwin ./main.go
+	@go build -o ./out/pitaya-cli-darwin ./...
 
 build-linux:
 	@mkdir -p out
