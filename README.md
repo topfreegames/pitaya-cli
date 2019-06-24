@@ -3,13 +3,13 @@ pitaya-cli
 
 A REPL cli client made in go for pitaya.
 
-### installing
+## Installing
 
 ```
 go get -u github.com/topfreegames/pitaya-cli
 ```
 
-### usage
+## Usage
 ```
 $ pitaya-cli
 
@@ -45,3 +45,17 @@ pitaya-cli -docs connector.docsHandler.docs
 ```
 
 This example can be run with the pitaya-bot protobuffer testing example.
+
+### Read commands from file
+
+It's possible to add a list of sequential requests into a file and pitaya-cli will execute them in order.
+
+For example: commands.txt
+
+```
+connect localhost:3250
+request connector.playerHandler.create
+request connector.playerHandler.findmatch {"RoomType":"xxxx"}
+```
+
+Then run: `pitaya-cli --filename commands.txt`

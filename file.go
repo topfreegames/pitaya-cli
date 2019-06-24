@@ -21,30 +21,73 @@
 package main
 
 import (
-	"flag"
-	"sync"
-
-	"github.com/topfreegames/pitaya/client"
+	"bufio"
+	"errors"
+	"log"
+	"os"
+	"strings"
 )
 
-var (
-	pClient        client.PitayaClient
-	disconnectedCh chan bool
-	docsString     string
-	fileName       string
-	pushInfo       map[string]string
-	wait           sync.WaitGroup
-)
+func executeFromFile(fileName string) {
+	logger := log.New(os.Stdout, "", log.LstdFlags)
 
-func main() {
-	flag.StringVar(&docsString, "docs", "", "documentation route")
-	flag.StringVar(&fileName, "filename", "", "file with commands")
-	flag.Parse()
+	var err error
+	defer func() {
+		if err != nil {
+			logger.Printf("error: %s", err.Error())
+		}
+	}()
 
-	switch {
-	case fileName != "":
-		executeFromFile(fileName)
+	var file *os.File
+	file, err = os.Open(fileName)
+	if err != nil {
+		return
+	}
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		command := scanner.Text()
+		err = executeCommand(logger, command)
+		if err != nil {
+			return
+		}
+	}
+
+	err = scanner.Err()
+	if err != nil {
+		return
+	}
+}
+
+func executeCommand(logger Log, command string) error {
+	parts := strings.Split(command, " ")
+
+	switch parts[0] {
+	case "connect":
+		return connect(logger, parts[1], func(data []byte) {
+			log.Printf("sv-> %s\n", string(data))
+			wait.Done()
+		})
+
+	case "request":
+		wait.Add(1)
+		if err := request(logger, parts[1:]); err != nil {
+			return err
+		}
+		wait.Wait()
+		return nil
+
+	case "notify":
+		return notify(logger, parts[1:])
+
+	case "push":
+		return push(logger, parts[1:])
+
+	case "disconnect":
+		disconnect()
+		return nil
+
 	default:
-		repl()
+		return errors.New("command not found")
 	}
 }

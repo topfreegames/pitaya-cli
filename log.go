@@ -20,31 +20,9 @@
 
 package main
 
-import (
-	"flag"
-	"sync"
-
-	"github.com/topfreegames/pitaya/client"
-)
-
-var (
-	pClient        client.PitayaClient
-	disconnectedCh chan bool
-	docsString     string
-	fileName       string
-	pushInfo       map[string]string
-	wait           sync.WaitGroup
-)
-
-func main() {
-	flag.StringVar(&docsString, "docs", "", "documentation route")
-	flag.StringVar(&fileName, "filename", "", "file with commands")
-	flag.Parse()
-
-	switch {
-	case fileName != "":
-		executeFromFile(fileName)
-	default:
-		repl()
-	}
+// Log has log methods
+type Log interface {
+	Print(...interface{})
+	Println(...interface{})
+	Printf(string, ...interface{})
 }

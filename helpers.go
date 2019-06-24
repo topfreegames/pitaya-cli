@@ -21,30 +21,65 @@
 package main
 
 import (
-	"flag"
-	"sync"
+	"fmt"
+	"os"
 
+	"github.com/mitchellh/go-homedir"
+	"github.com/sirupsen/logrus"
 	"github.com/topfreegames/pitaya/client"
+	"gopkg.in/abiosoft/ishell.v2"
 )
 
-var (
-	pClient        client.PitayaClient
-	disconnectedCh chan bool
-	docsString     string
-	fileName       string
-	pushInfo       map[string]string
-	wait           sync.WaitGroup
-)
+func protoClient(log Log, addr string) error {
+	log.Println("Using protobuf client")
+	protoclient := client.NewProto(docsString, logrus.InfoLevel)
+	pClient = protoclient
 
-func main() {
-	flag.StringVar(&docsString, "docs", "", "documentation route")
-	flag.StringVar(&fileName, "filename", "", "file with commands")
-	flag.Parse()
-
-	switch {
-	case fileName != "":
-		executeFromFile(fileName)
-	default:
-		repl()
+	for k, v := range pushInfo {
+		protoclient.AddPushResponse(k, v)
 	}
+
+	if err := protoclient.LoadServerInfo(addr); err != nil {
+		log.Println("Failed to load server info")
+		return err
+	}
+
+	return nil
+}
+
+func tryConnect(addr string) error {
+	if err := pClient.ConnectToTLS(addr, true); err != nil {
+		if err.Error() == "EOF" {
+			if err := pClient.ConnectTo(addr); err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func readServerMessages(callback func(data []byte)) {
+	channel := pClient.MsgChannel()
+	for {
+		select {
+		case <-disconnectedCh:
+			close(disconnectedCh)
+			return
+		case m := <-channel:
+			callback(m.Data)
+		}
+	}
+}
+
+func configure(c *ishell.Shell) {
+	historyPath := os.Getenv("PITAYACLI_HISTORY_PATH")
+	if historyPath == "" {
+		home, _ := homedir.Dir()
+		historyPath = fmt.Sprintf("%s/.pitayacli_history", home)
+	}
+
+	c.SetHistoryPath(historyPath)
 }
