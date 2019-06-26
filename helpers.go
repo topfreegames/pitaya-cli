@@ -21,6 +21,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 
@@ -69,7 +70,7 @@ func readServerMessages(callback func(data []byte)) {
 			close(disconnectedCh)
 			return
 		case m := <-channel:
-			callback(m.Data)
+			callback(parseData(m.Data))
 		}
 	}
 }
@@ -82,4 +83,14 @@ func configure(c *ishell.Shell) {
 	}
 
 	c.SetHistoryPath(historyPath)
+}
+
+func parseData(data []byte) []byte {
+	if prettyJSON {
+		var m interface{}
+		_ = json.Unmarshal(data, &m)
+		data, _ = json.MarshalIndent(m, "", "\t")
+	}
+
+	return data
 }

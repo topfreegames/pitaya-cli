@@ -10,6 +10,9 @@ go get -u github.com/topfreegames/pitaya-cli
 ```
 
 ## Usage
+
+For cli flags, run `pitaya-cli --help`
+
 ```
 $ pitaya-cli
 

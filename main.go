@@ -34,11 +34,13 @@ var (
 	fileName       string
 	pushInfo       map[string]string
 	wait           sync.WaitGroup
+	prettyJSON     bool
 )
 
 func main() {
 	flag.StringVar(&docsString, "docs", "", "documentation route")
 	flag.StringVar(&fileName, "filename", "", "file with commands")
+	flag.BoolVar(&prettyJSON, "pretty", false, "print pretty jsons")
 	flag.Parse()
 
 	switch {
