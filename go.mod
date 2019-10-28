@@ -23,6 +23,6 @@ require (
 	github.com/sirupsen/logrus v1.0.6
 	github.com/spf13/afero v1.1.1 // indirect
 	github.com/spf13/pflag v1.0.1 // indirect
-	github.com/topfreegames/pitaya v0.16.0
+	github.com/topfreegames/pitaya v0.16.1
 	gopkg.in/abiosoft/ishell.v2 v2.0.0
 )
