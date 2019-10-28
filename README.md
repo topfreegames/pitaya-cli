@@ -20,13 +20,15 @@ Pitaya REPL Client
 >>> help
 
 Commands:
-  clear           clear the screen
-  connect         connects to pitaya
-  disconnect      disconnects from pitaya server
-  exit            exit the program
-  help            display help
-  notify          makes a notify to pitaya server
-  request         makes a request to pitaya server
+  clear             clear the screen
+  connect           connects to pitaya
+  disconnect        disconnects from pitaya server
+  exit              exit the program
+  help              display help
+  notify            makes a notify to pitaya server
+  push              insert information of push return
+  request           makes a request to pitaya server
+  sethandshake      sets a handshake parameter
 ```
 
 For connecting to a protobuffer server specify the documentation route with the -docs argument:
@@ -48,6 +50,17 @@ pitaya-cli -docs connector.docsHandler.docs
 ```
 
 This example can be run with the pitaya-bot protobuffer testing example.
+
+### Set handshake parameters
+
+You can edit some handshake parameters before connecting to the server. The parameters are:
+
+```
+Pitaya REPL Client
+>>> sethandshake platform ios
+>>> sethandshake buildNumber 999
+>>> sethandshake version 1.0.6
+```
 
 ### Read commands from file
 

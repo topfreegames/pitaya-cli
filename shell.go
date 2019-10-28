@@ -35,6 +35,7 @@ func repl() {
 	registerRequest(shell)
 	registerNotify(shell)
 	registerPush(shell)
+	registerSetHandshake(shell)
 
 	pushInfo = make(map[string]string)
 
@@ -108,6 +109,19 @@ func registerDisconnect(shell *ishell.Shell) {
 		Help: "disconnects from pitaya server",
 		Func: func(c *ishell.Context) {
 			disconnect()
+		},
+	})
+}
+
+func registerSetHandshake(shell *ishell.Shell) {
+	shell.AddCmd(&ishell.Cmd{
+		Name: "sethandshake",
+		Help: "sets a handshake parameter",
+		Func: func(c *ishell.Context) {
+			err := setHandshake(c, c.Args)
+			if err != nil {
+				c.Err(err)
+			}
 		},
 	})
 }

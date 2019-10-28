@@ -172,8 +172,8 @@ github.com/tmc/grpc-websocket-proxy v0.0.0-20171017195756-830351dc03c6 h1:lYIiVD
 github.com/tmc/grpc-websocket-proxy v0.0.0-20171017195756-830351dc03c6/go.mod h1:ncp9v5uamzpCO7NfCPTXjqaC+bZgJeR0sMTm6dMHP7U=
 github.com/topfreegames/go-workers v1.0.0 h1:R53uIT6nwlT45WBm79ZDnxG8W2ec9lJk3uJhZUmd3GI=
 github.com/topfreegames/go-workers v1.0.0/go.mod h1:FZ45GKJrHNIChLw008zoR8lvoMTxK9RprdE2c3uLrCQ=
-github.com/topfreegames/pitaya v0.16.0 h1:A2NP1T4GajlNw7ZAn0oQTeDfQyS9b1r5Ds5y1wfEPqo=
-github.com/topfreegames/pitaya v0.16.0/go.mod h1:2UaEoglDroRu3YvM4tF5PMV2UCqVyh/UTVFc6biFCDk=
+github.com/topfreegames/pitaya v0.16.1 h1:RNnR3HGFm5At/pVIrjA8sGU0HgnjIn0+afeEpwJA8Lw=
+github.com/topfreegames/pitaya v0.16.1/go.mod h1:2UaEoglDroRu3YvM4tF5PMV2UCqVyh/UTVFc6biFCDk=
 github.com/uber-go/atomic v1.3.2 h1:Azu9lPBWRNKzYXSIwRfgRuDuS0YKsK4NFhiQv98gkxo=
 github.com/uber-go/atomic v1.3.2/go.mod h1:/Ct5t2lcmbJ4OSe/waGBoaVvVqtO0bmtfVNex1PFV8g=
 github.com/uber/jaeger-client-go v2.13.0+incompatible h1:BQ7GxyS54wK+5kfRNoMVOhgQ7VAjhYlFq4rAhV7pnHc=

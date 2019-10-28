@@ -40,6 +40,7 @@ func connect(logger Log, addr string, onMessageCallback func([]byte)) (err error
 		logger.Println("Using json client")
 		pClient = client.New(logrus.InfoLevel)
 	}
+	pClient.SetClientHandshakeData(handshake)
 
 	if err != nil {
 		return err
@@ -54,6 +55,24 @@ func connect(logger Log, addr string, onMessageCallback func([]byte)) (err error
 	disconnectedCh = make(chan bool, 1)
 	go readServerMessages(onMessageCallback)
 
+	return nil
+}
+
+func setHandshake(logger Log, args []string) error {
+	if len(args) != 2 {
+		return errors.New("invalid number of arguments, expected 2")
+	}
+	if args[0] != "version" && args[0] != "platform" && args[0] != "buildNumber" {
+		return errors.New("invalid argument to sethandshake, expected version, platform or buildNumber")
+	}
+	switch arg := args[0]; arg {
+	case "version":
+		handshake.Sys.Version = args[1]
+	case "platform":
+		handshake.Sys.Platform = args[1]
+	case "buildNumber":
+		handshake.Sys.BuildNumber = args[1]
+	}
 	return nil
 }
 
