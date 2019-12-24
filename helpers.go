@@ -50,7 +50,7 @@ func protoClient(log Log, addr string) error {
 
 func tryConnect(addr string) error {
 	if err := pClient.ConnectToTLS(addr, true); err != nil {
-		if err.Error() == "EOF" {
+		if err != nil {
 			if err := pClient.ConnectTo(addr); err != nil {
 				return err
 			}
