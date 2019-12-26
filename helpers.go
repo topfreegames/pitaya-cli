@@ -21,6 +21,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -49,16 +50,19 @@ func protoClient(log Log, addr string) error {
 }
 
 func tryConnect(addr string) error {
-	if err := pClient.ConnectToTLS(addr, true); err != nil {
-		if err != nil {
-			if err := pClient.ConnectTo(addr); err != nil {
-				return err
+	if err := pClient.ConnectToWS(addr, "", &tls.Config{
+		InsecureSkipVerify: true,
+	}); err != nil {
+		if err := pClient.ConnectToWS(addr, ""); err != nil {
+			if err := pClient.ConnectTo(addr, &tls.Config{
+				InsecureSkipVerify: true,
+			}); err != nil {
+				if err := pClient.ConnectTo(addr); err != nil {
+					return err
+				}
 			}
-		} else {
-			return err
 		}
 	}
-
 	return nil
 }
 
