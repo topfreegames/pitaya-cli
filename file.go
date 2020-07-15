@@ -69,6 +69,9 @@ func executeCommand(logger Log, command string) error {
 			wait.Done()
 		})
 
+	case "sethandshake":
+		return setHandshake(logger, parts[1:])
+
 	case "request":
 		wait.Add(1)
 		if err := request(logger, parts[1:]); err != nil {
