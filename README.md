@@ -53,8 +53,15 @@ This example can be run with the pitaya-bot protobuffer testing example.
 
 ### Set handshake parameters
 
-You can edit some handshake parameters before connecting to the server. The parameters are:
+You can edit handshake parameters before connecting to the server.
 
+You may pass the full handshake json:
+```
+Pitaya REPL Client
+>>> sethandshake {"sys":{"clientVersion":"1.0.6", "clientBuildNumber":"999","platform":"ios"}}
+```
+
+Or edit one of three specific parameters:
 ```
 Pitaya REPL Client
 >>> sethandshake platform ios
