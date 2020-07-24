@@ -118,7 +118,7 @@ func registerSetHandshake(shell *ishell.Shell) {
 		Name: "sethandshake",
 		Help: "sets a handshake parameter",
 		Func: func(c *ishell.Context) {
-			err := setHandshake(c, c.Args)
+			err := setHandshake(c, c.RawArgs[1:])
 			if err != nil {
 				c.Err(err)
 			}
