@@ -21,6 +21,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 
@@ -59,21 +60,29 @@ func connect(logger Log, addr string, onMessageCallback func([]byte)) (err error
 }
 
 func setHandshake(logger Log, args []string) error {
-	if len(args) != 2 {
-		return errors.New("invalid number of arguments, expected 2")
+
+	// Try first unserializing arguments as a json.
+	err := json.Unmarshal([]byte(strings.Join(args[:], "")), &handshake)
+	if err == nil {
+		return nil
 	}
-	if args[0] != "version" && args[0] != "platform" && args[0] != "buildNumber" {
-		return errors.New("invalid argument to sethandshake, expected version, platform or buildNumber")
+
+	if len(args) == 2 {
+		if args[0] != "version" && args[0] != "platform" && args[0] != "buildNumber" {
+			return errors.New("invalid argument to sethandshake, expected version, platform or buildNumber")
+		}
+		switch arg := args[0]; arg {
+		case "version":
+			handshake.Sys.Version = args[1]
+		case "platform":
+			handshake.Sys.Platform = args[1]
+		case "buildNumber":
+			handshake.Sys.BuildNumber = args[1]
+		}
+		return nil
 	}
-	switch arg := args[0]; arg {
-	case "version":
-		handshake.Sys.Version = args[1]
-	case "platform":
-		handshake.Sys.Platform = args[1]
-	case "buildNumber":
-		handshake.Sys.BuildNumber = args[1]
-	}
-	return nil
+
+	return errors.New("invalid number of arguments, expected 1 argument <json> or 2 arguments <variable> <value>")
 }
 
 func push(logger Log, args []string) error {
