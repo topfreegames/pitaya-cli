@@ -31,16 +31,64 @@ Commands:
   sethandshake      sets a handshake parameter
 ```
 
-For connecting to a protobuffer server specify the documentation route with the -docs argument:
+### Protobuf
+For connecting to a server that uses protobuf as serializer the server must implement two routes:
+- Docs: responsible for returning all handlers and the protos used on input and
+  output;
+- Descriptors: The list of protos descriptions, this will be used by the CLI to
+  encode/decode the messages.
 
+To implement those routes you can use some functions provided by pitaya, here is
+a short example of both routes:
+```go
+import (
+	// ...
+
+	"github.com/topfreegames/pitaya"
+	"github.com/topfreegames/pitaya/protos"
+)
+
+// Docs handler
+func (c *MyHandler) Docs(ctx context.Context) (*protos.Doc, error) {
+	d, err := pitaya.Documentation(true)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate documentation for pitaya routes: %w", err)
+	}
+
+	doc, err := json.Marshal(d)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode documentation JSON: %w", err)
+	}
+
+	return &protos.Doc{Doc: string(doc)}, nil
+}
+
+// Descriptors route
+func (c *MyHandler) Descriptors(ctx context.Context, names *protos.ProtoNames) (*protos.ProtoDescriptors, error) {
+	descriptors := make([][]byte, len(names.Name))
+
+	for i, protoName := range names.Name {
+		desc, err := pitaya.Descriptor(protoName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get descriptor for '%s': %w", protoName, err)
+		}
+
+		descriptors[i] = desc
+	}
+
+	return &protos.ProtoDescriptors{Desc: descriptors}, nil
+}
+```
+
+When initilizing the CLI, you have to provide the docs route as the following:
 ```
 pitaya-cli -docs connector.docsHandler.docs
 ```
 
-Protobuffer servers must implement handlers for protobuf descriptors and auto documentation.
+NOTE: The descriptors handler is automatically discovered by the client.
+It must only follow the signature mentioned earlier.
 
-A full example of running pitaya-cli with protobuffers:
-
+A full example of running pitaya-cli with protobuf:
 ```
 pitaya-cli -docs connector.docsHandler.docs
 >>> push connector.playerHandler.matchfound protos.FindMatchPush
@@ -48,8 +96,6 @@ pitaya-cli -docs connector.docsHandler.docs
 >>> request connector.playerHandler.create
 >>> request connector.playerHandler.findmatch {"RoomType":"xxxx"}
 ```
-
-This example can be run with the pitaya-bot protobuffer testing example.
 
 ### Set handshake parameters
 
