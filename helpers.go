@@ -28,7 +28,7 @@ import (
 
 	"github.com/mitchellh/go-homedir"
 	"github.com/sirupsen/logrus"
-	"github.com/topfreegames/pitaya/client"
+	"github.com/topfreegames/pitaya/v2/client"
 	"gopkg.in/abiosoft/ishell.v2"
 )
 

@@ -44,8 +44,8 @@ a short example of both routes:
 import (
 	// ...
 
-	"github.com/topfreegames/pitaya"
-	"github.com/topfreegames/pitaya/protos"
+	"github.com/topfreegames/pitaya/v2"
+	"github.com/topfreegames/pitaya/v2/protos"
 )
 
 // Docs handler
