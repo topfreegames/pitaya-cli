@@ -1,6 +1,12 @@
 pitaya-cli
 ==================
 
+# Repo Deprecation Notice
+
+## As a part of the initiative to centralize pitaya related code in a single repo, Pitaya CLI is now maintained at the [Pitaya main repo](https://github.com/topfreegames/pitaya).
+
+===========
+
 A REPL cli client made in go for pitaya.
 
 ## Installing
