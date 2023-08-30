@@ -12,7 +12,7 @@ A REPL cli client made in go for pitaya.
 ## Installing
 
 ```
-go install github.com/topfreegames/pitaya-cli/v2
+go install github.com/topfreegames/pitaya-cli/v2@latest
 ```
 
 ## Usage
