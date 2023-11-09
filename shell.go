@@ -82,7 +82,7 @@ func registerRequest(shell *ishell.Shell) {
 		Name: "request",
 		Help: "makes a request to pitaya server",
 		Func: func(c *ishell.Context) {
-			err := request(c, c.RawArgs[1:])
+			err := request(c, c.Args)
 			if err != nil {
 				c.Err(err)
 			}
